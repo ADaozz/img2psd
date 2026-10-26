@@ -2,7 +2,7 @@
 
 ## 硬约束
 
-1. **只有生图/放大可以碰模型/Codex。** 仅 `src/agents/codex.ts` 允许调用 Codex CLI；其余路径不得 `import '@openai/codex-sdk'`、不得启动 App Server、不得读 `~/.codex`。生图/放大是可插拔后端：`local`（本地放大）/ `api`（兼容 Images API）/ `qwen`（千问多模态）/ `apiyi`（API易图片编辑）/ `codex`（Codex CLI）。qwen-image-3 与 API易模型共用 `imagegen`，按模型 id 分流。
+1. **只有生图/放大可以碰模型/Codex。** 仅 `src/agents/codex.ts` 允许调用 Codex CLI；其余路径不得 `import '@openai/codex-sdk'`、不得启动 App Server、不得读 `~/.codex`。生图/放大是可插拔后端：`local`（本地放大）/ `api`（兼容 Images API）/ `apiyi`（API易图片编辑）/ `codex`（Codex CLI）。API易按模型 id 选择请求协议。
 2. **程序永不调用模型。** 管线只生产 job、校验提交、发布事实。
 3. **任何 agent 都能执行。** 执行者只需：能跑 shell、能读写文件、能查看图片。不要求 tool-calling 协议、不要求 MCP、不要求特定 SDK。
 
@@ -13,7 +13,7 @@
 | L0 core | 分组树、事实与哈希、SVG 校验、父范围、补全合成、整树合并、失效与恢复 | 仅 `sharp` + Node 标准库 |
 | L1 job | 把每个待做步骤物化为一个自包含目录（机器可读 + 人类可读） | L0 |
 | L2 agent 边界 | `l2d` CLI：唯一交互面 | L0/L1 |
-| L3 图片后端 | `imagegen` / `upscale` / `matte` 命令 | `local` / `api` / `qwen` / `apiyi` / `codex` 任选；`matte` 为确定性去背 |
+| L3 图片后端 | `imagegen` / `upscale` 命令 | `local` / `api` / `apiyi` / `codex` 任选 |
 
 **依赖方向单向**：L3 → L2 → L1 → L0，任何一层都不知道执行者是谁。
 
@@ -78,8 +78,7 @@ jobs/<seq>-<step>-<group-slug>/
 | `l2d check --svg <p> --group <id> ...` | ✅ | 单文件校验 |
 | `l2d merge --run <dir> --out <file> [--depth N] [--partial]` | ✅ | 整树合并出 preview.svg |
 | `l2d occlusion` | ⬜ | 遮挡层级表（后续） |
-| `l2d imagegen` / `l2d upscale` | ✅ | 可插拔后端：`L2D_IMAGE_BACKEND=api\|qwen\|apiyi\|codex`、`L2D_UPSCALE_BACKEND=local\|codex` |
-| `l2d matte --in --out` | ✅ | 去连通纯色背景，保留内部同色区域；模型只给白底时用它补透明通道 |
+| `l2d imagegen` / `l2d upscale` | ✅ | 可插拔后端：`L2D_IMAGE_BACKEND=api\|apiyi\|codex`、`L2D_UPSCALE_BACKEND=local\|codex` |
 
 ## 校验（与上游一致，不放宽）
 
@@ -108,7 +107,7 @@ jobs/<seq>-<step>-<group-slug>/
 2. ✅ **L1 job + `l2d next/submit/preview`**：轮廓绘制/返修/review 与遮挡补全已端到端跑通（含未自检拒绝、父级阻塞、审查轮数累积、补全原形保留、草稿篡改拒绝）。
 3. ✅ **整层去重与直属拆分**：按层派发、批次记录、程序生成 ID 并写回组树（`--expand`）。
 4. ✅ **遮挡层级规划**：`occlusion.json` v3（back-to-front，逐件 `level/note/check`，候选叠放核对）。
-5. ✅ **L3 图片后端**：`local`、`api`、`qwen`（千问多模态，多图）、`apiyi`（API易图片编辑，与 qwen-image-3 按模型分流）、`codex`，按环境变量或模型选择；配套 `matte` 去背。
+5. ✅ **L3 图片后端**：`local`、`api`、`apiyi`（API易图片编辑）、`codex`，按环境变量或模型选择；简化和素体交付带 Alpha 的 PNG：GPT 原生校验、Nano 双背景恢复；不做单背景去背。
 6. ✅ **raster / clothing-raster**：`raster.json` 驱动步骤；绘制与 review/返修是独立 job（`.drawn` → review → 返修 → review，轮数用完按 repaired 定稿）。
 
 ## 风险与取舍

@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { bytesHash, svgHash } from '../facts/hash.ts';
 import { writeAtomic } from '../facts/groups.ts';
 import { writeMergedPreview } from '../svg/merged-preview.ts';
@@ -19,12 +19,11 @@ const promptsRoot = join(repoRoot, 'prompts');
 const imageTools = [
   '正文若写 image_generation 或 Codex 内置生图，在本仓库改为下面的命令，不要启动 Codex：',
   '生图和局部放大由执行者自己调用，程序不代画：',
-  '- 千问 qwen-image-3：`l2d imagegen --model qwenimage3`',
-  '- API易标准化：`l2d imagegen --task standardize`（gemini-nano-banana-2.1）',
-  '- API易素体：`l2d imagegen --task body_reference`（gpt-image-2.5-sunburst）',
+  '- API易标准化：`l2d imagegen --task standardize --background transparent`（gemini-nano-banana-2.1）',
+  '- API易素体：`l2d imagegen --task body_reference --background transparent`（gpt-image-2.5-sunburst）',
   '- API易快速对照：`l2d imagegen --task fast_comparison`（gpt-image-2.5-flare）',
   '- 局部放大：`l2d upscale --backend local`',
-  '白底结果要透明背景时加 `--matte`。',
+  '简化和素体都加 `--background transparent`，交付带真实 Alpha 透明通道的 PNG（RGBA）。GPT 校验原生 Alpha；Nano Banana 优先保留原生 Alpha，否则执行双背景差分恢复。禁止单背景色键去背或 rematte，恢复失败须检查诊断文件。',
   '调度也由执行者推进：完成本 job 后执行 `l2d next` 领取下一步。SVG 只写入本 job 的草稿，正式文件由 `l2d submit` 发布。',
 ].join('\n');
 
@@ -168,7 +167,7 @@ async function instructions(plan: Plan, item: PlanItem, dir: string, record: Job
     lines.push(
       '先看原图与画风参考，判断是否需要简化。',
       '需要简化时，用下面的生图命令写出 simplified-subject.png；不需要则把原图复制过去。',
-      '然后做素体换装，写出 base-subject.png。白底图加 --matte。',
+      '然后做素体换装，写出 base-subject.png，使用 `--task body_reference --background transparent`。',
       '',
       `原图：${original}`,
       `简化参考：${join(repoRoot, 'resources/简化参考图片.png')}`,

@@ -10,7 +10,7 @@ const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$
 // 每个 part 保留自己的 SVG 根、表现属性与坐标系；本地资源 ID 加前缀，避免跨部件互相绑定。
 export function namespaceSvg(source: string, prefix: string): string {
   const ids = new Map([...source.matchAll(/\sid\s*=\s*(['"])(.*?)\1/g)].map(([, , id]) => [id, `${prefix}-${id}`]));
-  let result = source.replace(/(\s)id\s*=\s*(['"])(.*?)\2/g, (text, space, quote, id) => `${space}id=${quote}${ids.get(id)}${quote}`)
+  let result = source.replace(/(\s)id\s*=\s*(['"])(.*?)\2/g, (_text, space, quote, id) => `${space}id=${quote}${ids.get(id)}${quote}`)
     .replace(/url\(\s*(['"]?)#([^\s)'";]+)\1\s*\)/g, (text, quote, id) => ids.has(id) ? `url(${quote}#${ids.get(id)}${quote})` : text)
     .replace(/(\s(?:xlink:)?href\s*=\s*['"])#([^'"]+)(['"])/g, (text, start, id, end) => ids.has(id) ? `${start}#${ids.get(id)}${end}` : text);
   result = result.replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/g, (_text, attrs, css: string) => {

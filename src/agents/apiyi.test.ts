@@ -46,14 +46,15 @@ function geminiPayload(bytes: Buffer) {
   };
 }
 
-test('qwenimage3 与 API易模型共用 imagegen，按模型分流', () => {
-  const env = { DASHSCOPE_API_KEY: 'dash', APIYI_API_KEY: 'yi', L2D_IMAGE_BACKEND: 'qwen' };
-  assert.equal(selectBackend('imagegen', env, 'qwenimage3').name, 'qwen');
-  assert.equal(selectBackend('imagegen', env, 'Qwen-Image-3').name, 'qwen');
-  assert.equal(selectBackend('imagegen', env, 'gemini-nano-banana-2.1').name, 'apiyi');
-  assert.equal(selectBackend('imagegen', env, 'gpt-image-2.5-sunburst').name, 'apiyi');
-  assert.equal(selectBackend('imagegen', env, 'gpt-image-2.5-flare').name, 'apiyi');
-  assert.equal(selectBackend('imagegen', env).name, 'qwen');
+test('API易模型选择后端，已移除的 Qwen 模型明确报错', () => {
+  const env = { APIYI_API_KEY: 'yi', L2D_IMAGE_BACKEND: 'api', L2D_IMAGE_BASE_URL: 'http://localhost', L2D_IMAGE_API_KEY: 'test' };
+  for (const model of ['qwenimage3', 'Qwen-Image-3', 'qwen-image-3.0-pro']) {
+    assert.throws(() => selectBackend('imagegen', env, model), /已移除/);
+  }
+  for (const model of ['gemini-nano-banana-2.1', 'gpt-image-2.5-sunburst', 'gpt-image-2.5-flare']) {
+    assert.equal(selectBackend('imagegen', env, model).name, 'apiyi');
+  }
+  assert.equal(selectBackend('imagegen', env).name, 'api');
   assert.equal(resolveBackendName('imagegen', { APIYI_API_KEY: 'yi' }), 'apiyi');
   assert.throws(() => selectBackend('imagegen', { L2D_IMAGE_MODEL: 'gemini-nano-banana-2.1' }), /APIYI_API_KEY/);
 });
@@ -281,6 +282,9 @@ test('CLI：dry-run 不泄露密钥，真实请求按模型走两条协议', asy
   const directory = await tempDir();
   const source = await png(32, 48);
   const square = await png(8, 8);
+  const clearSource = await sharp(source).ensureAlpha().raw().toBuffer();
+  clearSource[3] = 0;
+  const transparent = await sharp(clearSource, { raw: { width: 32, height: 48, channels: 4 } }).png().toBuffer();
   await sharp(source).toFile(join(directory, 'ref.png'));
   await sharp(source).toFile(join(directory, 'extra.png'));
   const calls: { url?: string; type?: string; authorization?: string; body: string }[] = [];
@@ -304,11 +308,11 @@ test('CLI：dry-run 不泄露密钥，真实请求按模型走两条协议', asy
         response.end(JSON.stringify(geminiPayload(Buffer.from(data ?? '', 'base64'))));
         return;
       }
-      response.end(JSON.stringify({ data: [{ b64_json: source.toString('base64') }] }));
+      response.end(JSON.stringify({ data: [{ b64_json: transparent.toString('base64') }] }));
     });
   });
   const base = await origin(server);
-  const env = { APIYI_API_KEY: 'sk-cli-secret', APIYI_BASE_URL: base, L2D_IMAGE_BACKEND: 'qwen', DASHSCOPE_API_KEY: 'sk-dash-secret' };
+  const env = { APIYI_API_KEY: 'sk-cli-secret', APIYI_BASE_URL: base, L2D_IMAGE_BACKEND: 'api' };
   try {
     const preview = await l2d([
       'imagegen', '--task', 'standardize', '--prompt', '标准化',
@@ -318,18 +322,11 @@ test('CLI：dry-run 不泄露密钥，真实请求按模型走两条协议', asy
     assert.match(preview.stdout, /gemini-native/);
     assert.match(preview.stdout, /gemini-nano-banana-2.1/);
     assert.doesNotMatch(preview.stdout, /sk-cli-secret/);
-    assert.doesNotMatch(preview.stdout, /sk-dash-secret/);
     assert.doesNotMatch(preview.stdout, new RegExp(source.toString('base64').slice(0, 40)));
     assert.equal(calls.length, 0);
 
-    const qwenPreview = await l2d([
-      'imagegen', '--model', 'qwenimage3', '--prompt', '画', '--out', join(directory, 'qwen.png'), '--dry-run',
-    ], env);
-    assert.match(qwenPreview.stdout, /qwen-image-3\.0-pro/);
-    assert.doesNotMatch(qwenPreview.stdout, /sk-dash-secret/);
-
     await assert.rejects(
-      l2d(['imagegen', '--backend', 'qwen', '--model', 'gpt-image-2.5-sunburst', '--prompt', 'x', '--out', join(directory, 'x.png')], env),
+      l2d(['imagegen', '--backend', 'api', '--model', 'gpt-image-2.5-sunburst', '--prompt', 'x', '--out', join(directory, 'x.png')], env),
       (error: { stderr?: string }) => /不一致/.test(error.stderr ?? ''),
     );
 
@@ -347,12 +344,14 @@ test('CLI：dry-run 不泄露密钥，真实请求按模型走两条协议', asy
     await l2d([
       'imagegen', '--model', 'gpt-image-2.5-sunburst', '--prompt', '素体',
       '--ref', join(directory, 'ref.png'), '--ref', join(directory, 'extra.png'),
-      '--out', join(directory, 'sunburst.png'),
+      '--out', join(directory, 'sunburst.png'), '--background', 'transparent',
     ], env);
     const edit = calls[1];
     assert.equal(edit.url, '/v1/images/edits');
     assert.match(edit.type ?? '', /multipart\/form-data; boundary=/);
     assert.match(edit.body, /name="image\[\]"/);
+    assert.match(edit.body, /name="background"\r\n\r\ntransparent/);
+    assert.match(edit.body, /name="output_format"\r\n\r\npng/);
     assert.doesNotMatch(edit.body, /response_format|input_fidelity/);
     const sunburst = await sharp(join(directory, 'sunburst.png')).metadata();
     assert.equal(sunburst.width, 32);

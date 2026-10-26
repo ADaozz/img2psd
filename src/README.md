@@ -16,7 +16,6 @@ src/
     facts/     groups.ts     ← shared/part/groups.ts（树、原子写）
                hash.ts       ← svgHash / matchesHash
                review.ts     ← 新：审查轮数、结论、候选哈希、返修计数
-    image/     matte.ts       ← 新：四边灌水去背（保留内部同色区域 + 软边）
     raster/    config.ts      ← 新：raster.json 步骤定义与上游校验
     jobs/      plan.ts       ← 新：按父级屏障决定下一步派发
                materialize.ts← 新：job.json + INSTRUCTIONS.md 物化
@@ -27,8 +26,8 @@ src/
   agents/      image.ts      ← 后端选择与对外签名（imageGenerate / upscale）
                local.ts      ← Lanczos 放大（默认放大后端）
                api.ts        ← 兼容 Images API（generations / edits multipart）
-               qwen.ts       ← 千问多模态生图（多图 + 不扩写提示词）
-               apiyi.ts      ← API易图片编辑（Nano Banana / GPT-Image-2.5，与 qwen-image-3 分流）
+               transparency.ts ← 原生 Alpha 校验 / Nano 双背景恢复及诊断
+               apiyi.ts      ← API易图片编辑（Nano Banana / GPT-Image-2.5）
                codex.ts      ← Codex CLI（**唯一调用 Codex 的模块**）
                types.ts      ← PNG 校验与原子落盘
 prompts/raster/ 01-分层与补全 / 02-边缘柔化 / 02-review / 02-repair / 03-去除连体服 /

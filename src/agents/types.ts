@@ -22,6 +22,7 @@ export type ImageGenerateJob = {
 export type UpscaleJob = { input: string; output: string; scale?: number };
 export type ImageResult = {
   savedPath: string;
+  transparency?: { method: 'native' | 'dual-background'; artifactsDirectory: string };
   bytes: number;
   backend: string;
   model?: string;

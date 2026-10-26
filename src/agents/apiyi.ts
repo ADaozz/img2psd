@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import sharp from 'sharp';
 import { savePng } from './types.ts';
+import { chooseBackground, requireAlpha, solidPrompt, transparentImage } from './transparency.ts';
 import type { GptImageBackground, GptImageQuality, ImageBackend, ImageGenerateJob, ImageResult, ImageSizeTier } from './types.ts';
 
 // API易图片编辑。业务层是同一种请求；网络层按模型分成 gemini-native 与 openai-images。
@@ -451,7 +452,7 @@ async function readResponse(response: Response, secret: string): Promise<{ paylo
   }
 }
 
-export async function editImage(request: ImageEditRequest, config: ApiyiConfig): Promise<ImageEditResult> {
+async function requestImage(request: ImageEditRequest, config: ApiyiConfig): Promise<{ bytes: Buffer; requestId?: string; usage?: Record<string, number | undefined> }> {
   if (!isApiyiModel(request.model)) {
     throw new ImageEditError('unsupported_option', `不是 API易编辑模型：${String(request.model)}`);
   }
@@ -500,12 +501,7 @@ export async function editImage(request: ImageEditRequest, config: ApiyiConfig):
       const usage = numericUsage(gemini
         ? (payload as { usageMetadata?: unknown }).usageMetadata
         : (payload as { usage?: unknown }).usage);
-      const image = await finalizeImage(decodeBase64(encoded), request);
-      return {
-        provider: 'apiyi', model: request.model, requestId, usage,
-        image: { bytes: image.bytes, mimeType: image.mimeType, width: image.width, height: image.height, filename: image.filename },
-        canvasMatched: image.canvasMatched, ratioMatched: image.ratioMatched, aligned: image.aligned,
-      };
+      return { bytes: decodeBase64(encoded), requestId, usage };
     } catch (error) {
       if (!(error instanceof ImageEditError) || !RETRYABLE.has(error.kind) || attempt === attempts) {
         if (error instanceof ImageEditError && attempt > 1 && RETRYABLE.has(error.kind)) {
@@ -518,6 +514,18 @@ export async function editImage(request: ImageEditRequest, config: ApiyiConfig):
     }
   }
   throw last ?? new ImageEditError('provider_error', 'API易请求失败');
+}
+
+// Low-level editing remains a single request; transparent Gemini orchestration is
+// performed by the backend, before any resize or transparent letterboxing.
+export async function editImage(request: ImageEditRequest, config: ApiyiConfig): Promise<ImageEditResult> {
+  const raw = await requestImage(request, config);
+  if (request.gpt?.background === 'transparent') await requireAlpha(raw.bytes);
+  const image = await finalizeImage(raw.bytes, request);
+  return {
+    provider: 'apiyi', model: request.model, requestId: raw.requestId, usage: raw.usage,
+    image, canvasMatched: image.canvasMatched, ratioMatched: image.ratioMatched, aligned: image.aligned,
+  };
 }
 
 function parseSize(size: string): { width: number; height: number } {
@@ -534,8 +542,9 @@ export async function imageEditRequestFromJob(job: ImageGenerateJob, fallbackMod
   const source = await loadImageAsset(paths[0].path);
   const references: ImageAsset[] = [];
   for (const reference of paths.slice(1)) references.push(await loadImageAsset(reference.path));
-  if (isGeminiModel(model) && (job.quality || job.background)) {
-    throw new ImageEditError('unsupported_option', 'Nano Banana 不接受 quality / background');
+  if (job.background) assertEnum(job.background, BACKGROUNDS, 'background');
+  if (isGeminiModel(model) && job.quality) {
+    throw new ImageEditError('unsupported_option', 'Nano Banana 不接受 quality');
   }
   if (!isGeminiModel(model) && job.imageSize) {
     throw new ImageEditError('unsupported_option', 'GPT 图片编辑不接受 --image-size');
@@ -558,6 +567,14 @@ export async function imageEditRequestFromJob(job: ImageGenerateJob, fallbackMod
 
 export async function previewApiyi(job: ImageGenerateJob, options: { baseUrl?: string; model?: string } = {}): Promise<Record<string, unknown>> {
   const request = await imageEditRequestFromJob(job, options.model || 'gemini-nano-banana-2.1');
+  const transparency = job.background === 'transparent'
+    ? { method: isGeminiModel(request.model) ? 'native-or-dual-background' : 'native',
+      maxGenerationPasses: isGeminiModel(request.model) ? 2 : 1, validatesAlphaBeforeAlignment: true }
+    : undefined;
+  if (transparency && isGeminiModel(request.model)) {
+    const selection = await chooseBackground(Buffer.from(request.source.bytes));
+    request.prompt = solidPrompt(request.prompt, selection.hex);
+  }
   const images = [request.source, ...(request.references ?? [])].map(image => ({
     filename: image.filename, bytes: image.bytes.byteLength, mimeType: image.mimeType, width: image.width, height: image.height,
   }));
@@ -565,7 +582,7 @@ export async function previewApiyi(job: ImageGenerateJob, options: { baseUrl?: s
   if (isGeminiModel(request.model)) {
     const body = buildGeminiBody(request);
     return {
-      provider: 'apiyi', protocol: 'gemini-native', endpoint, model: request.model,
+      provider: 'apiyi', protocol: 'gemini-native', endpoint, model: request.model, transparency,
       promptChars: request.prompt.length, canvas: request.canvas, images,
       body: {
         contents: [{
@@ -585,7 +602,7 @@ export async function previewApiyi(job: ImageGenerateJob, options: { baseUrl?: s
   const fields: string[] = [];
   for (const [name] of form.entries()) fields.push(name);
   return {
-    provider: 'apiyi', protocol: 'openai-images', endpoint, model: request.model,
+    provider: 'apiyi', protocol: 'openai-images', endpoint, model: request.model, transparency,
     promptChars: request.prompt.length, canvas: request.canvas, images, size, fields,
   };
 }
@@ -595,10 +612,42 @@ export function apiyiBackend(config: ApiyiConfig): ImageBackend {
     name: 'apiyi',
     async imageGenerate(job: ImageGenerateJob): Promise<ImageResult> {
       const request = await imageEditRequestFromJob(job, config.model || 'gemini-nano-banana-2.1');
-      const edited = await editImage(request, config);
+      let transparency: { method: 'native' | 'dual-background'; artifactsDirectory: string } | undefined;
+      let edited: ImageEditResult;
+      if (job.background === 'transparent') {
+        let firstResponse: Awaited<ReturnType<typeof requestImage>> | undefined;
+        let finalized: Awaited<ReturnType<typeof finalizeImage>> | undefined;
+        const generated = await transparentImage({
+          output: job.output, prompt: request.prompt, source: Buffer.from(request.source.bytes),
+          dual: isGeminiModel(request.model),
+          finalize: async png => {
+            finalized = await finalizeImage(png, request);
+            return Buffer.from(finalized.bytes);
+          },
+          request: async (prompt, replacementSource) => {
+            let current = { ...request, prompt };
+            if (replacementSource) {
+              const meta = await inspect(replacementSource);
+              current = { ...current, source: { bytes: replacementSource, ...meta, filename: 'original.png' }, references: [] };
+            }
+            const result = await requestImage(current, config);
+            if (!replacementSource) firstResponse = result;
+            return result.bytes;
+          },
+        });
+        // finalize is called only after checking/recovering the unpadded pixels.
+        const image = finalized!;
+        edited = { provider: 'apiyi', model: request.model, image,
+          requestId: firstResponse?.requestId, usage: firstResponse?.usage,
+          canvasMatched: image.canvasMatched, ratioMatched: image.ratioMatched, aligned: image.aligned };
+        transparency = { method: generated.method, artifactsDirectory: generated.artifactsDirectory };
+      } else {
+        edited = await editImage(request, config);
+      }
       const saved = await savePng(Buffer.from(edited.image.bytes), job.output, 'apiyi');
       return {
         ...saved, model: edited.model, requestId: edited.requestId,
+        ...(transparency ? { transparency } : {}),
         canvasMatched: edited.canvasMatched, ratioMatched: edited.ratioMatched, aligned: edited.aligned,
       };
     },

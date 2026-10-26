@@ -1,29 +1,24 @@
 import { localBackend } from './local.ts';
 import { apiBackend } from './api.ts';
 import { codexBackend } from './codex.ts';
-import { qwenBackend } from './qwen.ts';
 import { apiyiBackend, isApiyiModel } from './apiyi.ts';
 import type { ImageBackend, ImageGenerateJob, ImageResult, Operation, UpscaleJob } from './types.ts';
 
 export type { ImageGenerateJob, ImageReference, ImageResult, Operation, UpscaleJob } from './types.ts';
-export { qwenRequest, qwenEndpoint } from './qwen.ts';
 export { isApiyiModel, previewApiyi, taskModel } from './apiyi.ts';
 
-export const QWEN_IMAGE_3 = 'qwen-image-3.0-pro';
-
-const QWEN_ALIASES = new Set(['qwen-image-3.0-pro', 'qwen-image-3.0', 'qwen-image-3', 'qwenimage3']);
-
-// qwen-image-3 与 API易编辑模型共用 imagegen。写明的模型决定后端；别名归一成正式 id。
 export function canonicalModel(model: string | undefined): string | undefined {
   const trimmed = model?.trim();
   if (!trimmed) return undefined;
-  return QWEN_ALIASES.has(trimmed.toLowerCase()) ? QWEN_IMAGE_3 : trimmed;
+  if (/^(qwen-image-3(?:\.0(?:-pro)?)?|qwenimage3)$/i.test(trimmed)) {
+    throw new Error('qwen-image-3 已移除，请使用 API易模型或 --task');
+  }
+  return trimmed;
 }
 
-export function providerForModel(model: string | undefined): 'qwen' | 'apiyi' | undefined {
+export function providerForModel(model: string | undefined): 'apiyi' | undefined {
   const canonical = canonicalModel(model);
   if (!canonical) return undefined;
-  if (canonical === QWEN_IMAGE_3) return 'qwen';
   if (isApiyiModel(canonical)) return 'apiyi';
   return undefined;
 }
@@ -48,7 +43,6 @@ export function resolveBackendName(operation: Operation, env: NodeJS.ProcessEnv 
   const configured = providerForModel(env.L2D_IMAGE_MODEL);
   if (configured) return configured;
   if (env.L2D_IMAGE_BASE_URL && env.L2D_IMAGE_API_KEY) return 'api';
-  if (env.DASHSCOPE_API_KEY || env.L2D_QWEN_API_KEY) return 'qwen';
   if (env.APIYI_API_KEY) return 'apiyi';
   return 'codex';
 }
@@ -58,22 +52,13 @@ export function selectBackend(operation: Operation, env: NodeJS.ProcessEnv = pro
   const chosen = canonicalModel(model);
 
   if (name === 'local') {
-    if (operation === 'imagegen') throw new Error('local 后端不支持生图；请设置 L2D_IMAGE_BACKEND=api、qwen、apiyi 或 codex');
+    if (operation === 'imagegen') throw new Error('local 后端不支持生图；请设置 L2D_IMAGE_BACKEND=api、apiyi 或 codex');
     return localBackend;
   }
   if (name === 'api') {
     const baseUrl = env.L2D_IMAGE_BASE_URL, apiKey = env.L2D_IMAGE_API_KEY;
     if (!baseUrl || !apiKey) throw new Error('api 后端需要 L2D_IMAGE_BASE_URL 与 L2D_IMAGE_API_KEY');
     return apiBackend({ baseUrl, apiKey, model: modelFor('api', chosen, env) || 'gpt-image-1' });
-  }
-  if (name === 'qwen') {
-    const apiKey = env.DASHSCOPE_API_KEY?.trim() || env.L2D_QWEN_API_KEY?.trim();
-    if (!apiKey) throw new Error('qwen 后端需要 DASHSCOPE_API_KEY（或 L2D_QWEN_API_KEY）');
-    return qwenBackend({
-      apiKey,
-      baseUrl: env.L2D_IMAGE_BASE_URL?.trim() || 'https://cn-beijing.maas.qianwenaiapi.com/api/v1',
-      model: modelFor('qwen', chosen, env) || QWEN_IMAGE_3,
-    });
   }
   if (name === 'apiyi') {
     const apiKey = env.APIYI_API_KEY?.trim();
@@ -87,7 +72,7 @@ export function selectBackend(operation: Operation, env: NodeJS.ProcessEnv = pro
     });
   }
   if (name === 'codex') return codexBackend();
-  throw new Error(`未知图片后端：${name}（可选 local / api / qwen / apiyi / codex）`);
+  throw new Error(`未知图片后端：${name}（可选 local / api / apiyi / codex）`);
 }
 
 export async function imageGenerate(job: ImageGenerateJob, env: NodeJS.ProcessEnv = process.env): Promise<ImageResult> {

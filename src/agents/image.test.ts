@@ -41,8 +41,9 @@ async function listen(server: Server): Promise<string> {
 test('local 后端放大：尺寸按倍数变化，输出仍是 PNG', localUpscale);
 
 test('api 后端：无参考图走 generations，有参考图走 edits multipart', async () => {
-  const pixel = await sharp({ create: { width: 4, height: 4, channels: 4, background: { r: 10, g: 20, b: 30, alpha: 1 } } })
-    .png().toBuffer();
+  const raw = Buffer.alloc(4 * 4 * 4, 255);
+  raw[3] = 0;
+  const pixel = await sharp(raw, { raw: { width: 4, height: 4, channels: 4 } }).png().toBuffer();
   const calls: { url?: string; type?: string; body?: string }[] = [];
   const server = createServer((request, response) => {
     let body = '';
@@ -59,18 +60,23 @@ test('api 后端：无参考图走 generations，有参考图走 edits multipart
     await sharp(pixel).toFile(join(directory, 'ref.png'));
     const env = { L2D_IMAGE_BACKEND: 'api', L2D_IMAGE_BASE_URL: base, L2D_IMAGE_API_KEY: 'test-key', L2D_IMAGE_MODEL: 'mock-model' };
 
-    await l2d(['imagegen', '--prompt', '画一只猫', '--out', join(directory, 'gen.png')], env);
+    await l2d(['imagegen', '--prompt', '画一只猫', '--out', join(directory, 'gen.png'), '--background', 'transparent'], env);
     assert.equal(calls[0].url, '/v1/images/generations');
     assert.match(calls[0].type ?? '', /application\/json/);
     assert.match(calls[0].body ?? '', /mock-model/);
+    assert.equal(JSON.parse(calls[0].body!).background, 'transparent');
+    assert.equal(JSON.parse(calls[0].body!).output_format, 'png');
     assert.equal((await readFile(join(directory, 'gen.png'))).subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
 
-    await l2d(['imagegen', '--prompt', '换装', '--ref', join(directory, 'ref.png'), '--out', join(directory, 'edit.png')], env);
+    await l2d(['imagegen', '--prompt', '换装', '--ref', join(directory, 'ref.png'), '--out', join(directory, 'edit.png'), '--background', 'transparent'], env);
     const edit = calls[1];
     assert.equal(edit.url, '/v1/images/edits');
     assert.match(edit.type ?? '', /multipart\/form-data/);
     assert.match(edit.body ?? '', /name="image\[\]"/);
     assert.match(edit.body ?? '', /换装/);
+    assert.match(edit.body ?? '', /name="background"\r\n\r\ntransparent/);
+    assert.match(edit.body ?? '', /name="output_format"\r\n\r\npng/);
+    assert.deepEqual(await readFile(join(directory, 'edit.png')), pixel);
   } finally {
     server.close();
     await rm(directory, { recursive: true, force: true });

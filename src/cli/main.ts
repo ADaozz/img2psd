@@ -16,8 +16,7 @@ import { jobDirectory, planJobs } from '../core/jobs/plan.ts';
 import { materialize, readJob } from '../core/jobs/materialize.ts';
 import { appendObservation } from '../core/jobs/observations.ts';
 import { submit as submitJob } from '../core/jobs/submit.ts';
-import { imageGenerate, upscale as upscaleImage, qwenRequest, qwenEndpoint, canonicalModel, previewApiyi, providerForModel, resolveBackendName, taskModel } from '../agents/image.ts';
-import { matteBackground } from '../core/image/matte.ts';
+import { imageGenerate, upscale as upscaleImage, canonicalModel, previewApiyi, providerForModel, resolveBackendName, taskModel } from '../agents/image.ts';
 import { loadRasterConfig, upstreamDirectory } from '../core/raster/config.ts';
 
 const stages = ['outline', 'review', 'reduction', 'completion', 'completionCheck'] as const;
@@ -305,7 +304,7 @@ async function imagegen(args: string[]) {
     ref: { type: 'string', multiple: true }, size: { type: 'string' }, model: { type: 'string' },
     task: { type: 'string' }, backend: { type: 'string' }, 'dry-run': { type: 'boolean' },
     loose: { type: 'boolean' }, 'image-size': { type: 'string' }, quality: { type: 'string' },
-    background: { type: 'string' }, matte: { type: 'boolean' }, json: { type: 'boolean' },
+    background: { type: 'string' }, json: { type: 'boolean' },
   } });
   if (!values.out) throw new Error('imagegen 需要 --out <输出 PNG>');
   const prompt = values['prompt-file'] ? await readFile(resolve(values['prompt-file']), 'utf8') : values.prompt;
@@ -338,20 +337,6 @@ async function imagegen(args: string[]) {
   // 预检：只打印请求摘要（图片以长度替代 base64），不联网，也不打印密钥。
   if (values['dry-run']) {
     const name = resolveBackendName('imagegen', env, model);
-    if (name === 'qwen') {
-      const qwenModel = model && providerForModel(model) === 'qwen'
-        ? model
-        : canonicalModel(env.L2D_IMAGE_MODEL) || 'qwen-image-3.0-pro';
-      const { body, images } = await qwenRequest({ ...job, model: qwenModel }, qwenModel);
-      const content = (body.input.messages[0].content as Record<string, unknown>[])
-        .map(item => ('image' in item ? { image: `<data URI，${String(item.image).length} 字符>` } : item));
-      console.log(JSON.stringify({
-        endpoint: qwenEndpoint(env.L2D_IMAGE_BASE_URL?.trim() || 'https://cn-beijing.maas.qianwenaiapi.com/api/v1'),
-        model: qwenModel, promptChars: job.prompt.length, images,
-        body: { ...body, input: { messages: [{ role: 'user', content }] } },
-      }, null, 2));
-      return 0;
-    }
     if (name === 'apiyi') {
       const configured = canonicalModel(env.L2D_IMAGE_MODEL);
       const apiyiModel = model && provider === 'apiyi' ? model
@@ -362,15 +347,12 @@ async function imagegen(args: string[]) {
       }), null, 2));
       return 0;
     }
-    throw new Error('--dry-run 目前只支持 qwen 与 apiyi 后端');
+    throw new Error('--dry-run 目前只支持 apiyi 后端');
   }
   const result = await imageGenerate(job, env);
-  // 有些模型只返回白底 RGB；--matte 用确定性灌水补出透明背景。
-  const matted = values.matte ? await matteBackground(result.savedPath, result.savedPath) : undefined;
-  console.log(values.json ? JSON.stringify({ ...result, ...(matted ? { matte: matted } : {}) }, null, 2)
+  console.log(values.json ? JSON.stringify(result, null, 2)
     : `已生成：${result.savedPath}（后端 ${result.backend}${result.model ? `，模型 ${result.model}` : ''}，${result.bytes} 字节）`
-      + (result.aligned ? '；已等比例对齐到目标画布' : '')
-      + (matted ? `；已去背（背景 ${matted.background}，去除 ${(matted.removed / matted.total * 100).toFixed(1)}% 像素）` : ''));
+      + (result.aligned ? '；已等比例对齐到目标画布' : ''));
   return 0;
 }
 
@@ -387,22 +369,6 @@ async function upscaleCmd(args: string[]) {
   }, env);
   console.log(values.json ? JSON.stringify(result, null, 2)
     : `已放大：${result.savedPath}（后端 ${result.backend}，${result.bytes} 字节）`);
-  return 0;
-}
-
-async function matteCmd(args: string[]) {
-  const { values } = parseArgs({ args, options: {
-    in: { type: 'string' }, out: { type: 'string' }, tolerance: { type: 'string' },
-    feather: { type: 'string' }, json: { type: 'boolean' },
-  } });
-  if (!values.in || !values.out) throw new Error('matte 需要 --in <PNG> 与 --out <PNG>');
-  const result = await matteBackground(resolve(values.in), resolve(values.out), {
-    ...(values.tolerance ? { tolerance: Number(values.tolerance) } : {}),
-    ...(values.feather ? { feather: Number(values.feather) } : {}),
-  });
-  const percent = (result.removed / result.total * 100).toFixed(1);
-  console.log(values.json ? JSON.stringify(result, null, 2)
-    : `已去背：${resolve(values.out)}（背景 ${result.background}，去除 ${percent}% 像素）`);
   return 0;
 }
 
@@ -423,17 +389,16 @@ const usage = `l2d — live2d-portable 唯一 agent 接口（核心命令不依�
   l2d check    --svg <file> --group <id> [--canvas 1024x1536] [--parent <svg>] [--allow-empty] [--json]
   l2d merge    --run <part-layering> --out <preview.svg> [--depth N] [--partial]
   l2d imagegen --prompt <文本> | --prompt-file <f> --out <png> [--ref <png> ...] [--size WxH]
-               [--model qwen-image-3.0-pro|qwenimage3|gemini-nano-banana-2.1|gpt-image-2.5-sunburst|gpt-image-2.5-flare]
+               [--model gemini-nano-banana-2.1|gpt-image-2.5-sunburst|gpt-image-2.5-flare]
                [--task standardize|body_reference|fast_comparison]
-               [--backend qwen|apiyi|api|codex] [--loose] [--image-size 1K|2K|4K]
-               [--quality high] [--background auto|opaque|transparent] [--dry-run] [--matte]
+               [--backend apiyi|api|codex] [--loose] [--image-size 1K|2K|4K]
+               [--quality high] [--background auto|opaque|transparent] [--dry-run]
   l2d upscale  --in <png> --out <png> [--scale 2..8] [--backend local|codex]
-  l2d matte    --in <png> --out <png> [--tolerance 0..120] [--feather 0..4]
 
 执行者约定：l2d next 拿到 job → 读 INSTRUCTIONS.md → 写草稿 → l2d preview 自检 → l2d submit。
 程序负责校验与发布事实；只有 imagegen / upscale 涉及图片生成，且后端可选：
-  L2D_IMAGE_BACKEND=qwen|apiyi|api|codex（生图）、L2D_UPSCALE_BACKEND=local|codex（放大）。
-  qwen-image-3 与 API易编辑模型写在同一次 imagegen 里，按 --model / --task 选后端。`;
+  L2D_IMAGE_BACKEND=apiyi|api|codex（生图）、L2D_UPSCALE_BACKEND=local|codex（放大）。
+  API易图片编辑按 --model / --task 选择模型。`;
 
 // 启动时加载项目 .env；已有环境变量优先，L2D_NO_DOTENV=1 可跳过。
 if (!process.env.L2D_NO_DOTENV) loadDotEnv(fileURLToPath(new URL('../../.env', import.meta.url)));
@@ -450,7 +415,6 @@ async function main(argv: string[]): Promise<number> {
     case 'merge': return merge(rest);
     case 'imagegen': return imagegen(rest);
     case 'upscale': return upscaleCmd(rest);
-    case 'matte': return matteCmd(rest);
     case undefined:
     case '-h':
     case '--help':

@@ -52,7 +52,9 @@ test('参考准备：缺素体参考时先派发 preparation，提交后进入�
     const instructions = await readFile(join(jobDir, 'INSTRUCTIONS.md'), 'utf8');
     assert.match(instructions, /是否需要简化/);
     assert.match(instructions, /素体换装/);
-    assert.match(instructions, /--matte/);
+    assert.match(instructions, /--background transparent/);
+    assert.match(instructions, /Alpha 透明通道/);
+    assert.doesNotMatch(instructions, /--matte|qwen/);
 
     // 模拟执行者：不需要简化 → 直接复制；换装产物用透明背景图代替
     await writeFile(join(runDir, 'references/simplified-subject.png'), await readFile(join(runDir, 'input/original.png')));

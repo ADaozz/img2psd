@@ -78,14 +78,14 @@ node src/cli/main.ts submit  --job <job> --checks '{"hair":"贴边正确"}' --no
 ```bash
 # 1) 看原图与画风参考，决定是否需要简化
 # 2a) 需要简化：
-node src/cli/main.ts imagegen --prompt-file prompts/2-简化图片.md \
+node src/cli/main.ts imagegen --task standardize --background transparent --prompt-file prompts/2-简化图片.md \
   --ref <run>/input/original.png --ref resources/简化参考图片.png \
-  --out <run>/references/simplified-subject.png --matte --size <WxH>
+  --out <run>/references/simplified-subject.png --size <WxH>
 # 2b) 不需要：直接复制原图
 # 3) 素体换装
-node src/cli/main.ts imagegen --prompt-file prompts/3-素体参考.md \
+node src/cli/main.ts imagegen --task body_reference --background transparent --prompt-file prompts/3-素体参考.md \
   --ref <run>/references/simplified-subject.png --ref resources/连体服参考.jpg \
-  --out <run>/references/base-subject.png --matte --size <WxH>
+  --out <run>/references/base-subject.png --size <WxH>
 # 4) 提交
 node src/cli/main.ts submit --job <job> --note "是否需要简化及生成情况"
 ```
@@ -134,14 +134,13 @@ node src/cli/main.ts upscale  --in <png> --out <png> [--scale 2..8]     # 默认
 node src/cli/main.ts imagegen --prompt "..." --out <png> [--ref <png> ...]
 ```
 
-后端由环境变量选择：`L2D_IMAGE_BACKEND=api|qwen|apiyi|codex`（生图）、`L2D_UPSCALE_BACKEND=local|codex`（放大）。同一次 `imagegen` 也可以用 `--model` 在 qwen-image-3 和 API易之间切换。
+后端由环境变量选择：`L2D_IMAGE_BACKEND=api|apiyi|codex`（生图）、`L2D_UPSCALE_BACKEND=local|codex`（放大）。API易模型通过 `--model` 或 `--task` 选择。
 
 - `api`：`L2D_IMAGE_BASE_URL`、`L2D_IMAGE_API_KEY`、可选 `L2D_IMAGE_MODEL`
-- `qwen`：`DASHSCOPE_API_KEY`（必填）、`L2D_IMAGE_BASE_URL`（默认千问北京端点）、`L2D_IMAGE_MODEL`（默认 `qwen-image-3.0-pro`，别名 `qwenimage3`）
 - `apiyi`：`APIYI_API_KEY`（必填，不可下发到浏览器）、可选 `APIYI_BASE_URL`（默认 `https://api.apiyi.com`）、`APIYI_TIMEOUT_MS`（默认 300000）
 - 这些变量可写在项目根目录 `.env`（自动加载，已 gitignore）；命令行同名变量优先
 - API易模型与任务：`--task standardize` → `gemini-nano-banana-2.1`；`--task body_reference` → `gpt-image-2.5-sunburst`；`--task fast_comparison` → `gpt-image-2.5-flare`。这三条都是图生图，必须有 `--ref`。默认严格保持原图画布；比例接近但像素不同、且允许补边时加 `--loose`
-- 有白底但要求透明时加 `--matte`：`l2d imagegen ... --matte`，或单独 `l2d matte --in a.png --out b.png`
+- 简化与素体都加 `--background transparent`，必须交付带真实 Alpha 的透明 PNG。GPT 请求原生透明并校验返回像素；Nano Banana 使用工具层双背景恢复（最多两次生图，网络重试另计），原生 Alpha 优先。禁止单背景色键去背或 rematte。每次透明请求在输出旁保留独立诊断目录，失败不覆盖交付文件。
 
 ## 目录
 
