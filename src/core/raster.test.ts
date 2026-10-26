@@ -147,6 +147,7 @@ test('栅格 review：绘制 → review(revise) → 返修 → review(pass) 后�
     plan = JSON.parse((await l2d('next', '--run', raster, '--json')).stdout);
     assert.equal(plan.jobs[0].kind, 'raster-review');
     const review1 = plan.jobs[0].dir;
+    assert.match(await readFile(join(review1, 'INSTRUCTIONS.md'), 'utf8'), /独立视觉 review/);
     await assert.rejects(l2d('submit', '--job', review1, '--verdict', 'revise', '--feedback', '边缘有白边'),
       (error: { code?: number }) => error.code === 1);
     await l2d('preview', '--job', review1, '--mode', 'blend');
@@ -157,6 +158,7 @@ test('栅格 review：绘制 → review(revise) → 返修 → review(pass) 后�
     assert.equal(plan.jobs[0].kind, 'raster');
     assert.equal(plan.jobs[0].reason, 'raster');
     assert.match(await readFile(join(plan.jobs[0].dir, 'INSTRUCTIONS.md'), 'utf8'), /边缘有白边/);
+    assert.match(await readFile(join(plan.jobs[0].dir, 'INSTRUCTIONS.md'), 'utf8'), /请继续修复第二步工程/);
     await l2d('submit', '--job', plan.jobs[0].dir, '--note', '已重画边缘');
     const report = JSON.parse(await readFile(join(raster, 'step02/review.json'), 'utf8'));
     assert.equal(report.repairs, 1);

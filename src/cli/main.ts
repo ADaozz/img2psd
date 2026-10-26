@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 唯一 agent 接口：任何能跑 shell 的执行者都通过这里读 job、渲染预览、提交产物。
-// 本文件及其依赖不引用 Codex；只有 src/agents/codex-image.ts 才允许。
+// 本文件及其依赖不引用 Codex；只有 src/agents/codex.ts 才允许，且仅作可选的生图/放大后端。
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { loadDotEnv } from '../config/env.ts';
@@ -12,6 +12,10 @@ import { renderPreview, type PreviewMode } from '../core/svg/render.ts';
 import { assertCompletionPreserves } from '../core/svg/completion.ts';
 import { mergePartSvgs } from '../core/svg/merge.ts';
 import { nodeKind, normalizeTree, walkGroups, type GroupNode } from '../core/facts/groups.ts';
+import { jobDirectory, planJobs } from '../core/jobs/plan.ts';
+import { materialize, readJob } from '../core/jobs/materialize.ts';
+import { appendObservation } from '../core/jobs/observations.ts';
+import { submit as submitJob } from '../core/jobs/submit.ts';
 import { imageGenerate, upscale as upscaleImage, qwenRequest, qwenEndpoint, canonicalModel, previewApiyi, providerForModel, resolveBackendName, taskModel } from '../agents/image.ts';
 import { matteBackground } from '../core/image/matte.ts';
 import { loadRasterConfig, upstreamDirectory } from '../core/raster/config.ts';
@@ -182,12 +186,7 @@ async function preview(args: string[]) {
     job: { type: 'string' }, json: { type: 'boolean' },
   } });
   // --job：按 job 绑定的参考、画布与父图渲染，并把观测登记到该 job。
-  // job 模块按命令加载，避免生图/放大被尚未纳入仓库的编排文件挡住。
-  const jobModules = values.job ? {
-    readJob: (await import('../core/jobs/materialize.ts')).readJob,
-    appendObservation: (await import('../core/jobs/observations.ts')).appendObservation,
-  } : undefined;
-  const job = jobModules ? await jobModules.readJob(resolve(values.job!)) : undefined;
+  const job = values.job ? await readJob(resolve(values.job)) : undefined;
   if (!values.svg && !job) throw new Error('preview 需要 --svg <文件> 或 --job <job 目录>');
   const svg = resolve(values.svg ?? job!.inputs.candidate ?? job!.output.draft);
   const root = resolve(values.root ?? job?.run ?? dirname(svg));
@@ -206,7 +205,7 @@ async function preview(args: string[]) {
     ...(crop ? { crop } : {}), ...(values.scale ? { scale: Number(values.scale) } : {}),
   });
   if (job) {
-    await jobModules!.appendObservation(resolve(values.job!), {
+    await appendObservation(resolve(values.job!), {
       source: result.source, mode: result.mode, savedPath: result.savedPath, at: new Date().toISOString(),
     });
   }
@@ -250,8 +249,6 @@ async function next(args: string[]) {
   const run = resolve(values.run);
   const maxRounds = values['review-rounds'] === undefined ? 2 : Number(values['review-rounds']);
   if (!Number.isSafeInteger(maxRounds) || maxRounds < 1 || maxRounds > 4) throw new Error('--review-rounds 须为 1..4');
-  const { planJobs, jobDirectory } = await import('../core/jobs/plan.ts');
-  const { materialize } = await import('../core/jobs/materialize.ts');
   const plan = await planJobs(run, { maxRounds, expand: values.expand === true });
   const jobs = [];
   for (const item of plan.items) {
@@ -279,7 +276,6 @@ async function submitCmd(args: string[]) {
     checks: { type: 'string' }, groups: { type: 'string' }, subject: { type: 'string' }, json: { type: 'boolean' },
   } });
   if (!values.job) throw new Error('submit 需要 --job <job 目录>');
-  const { submit: submitJob } = await import('../core/jobs/submit.ts');
   const result = await submitJob(resolve(values.job), {
     ...(values.svg ? { svg: values.svg } : {}),
     ...(values.verdict ? { verdict: values.verdict as 'pass' | 'revise' | 'blocked' } : {}),
