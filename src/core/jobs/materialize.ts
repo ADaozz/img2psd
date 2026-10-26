@@ -1,4 +1,5 @@
 import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { bytesHash, svgHash } from '../facts/hash.ts';
@@ -140,6 +141,11 @@ export async function materialize(plan: Plan, item: PlanItem, maxRounds: number,
     record.review = await reviewPlan(record.inputs.candidate!, reference, plan.canvas);
     await writeAtomic(join(dir, 'inputs/review-plan.json'), JSON.stringify(record.review, null, 2) + '\n');
     await writeAtomic(join(dir, 'inputs/review-checks.template.json'), JSON.stringify(evidenceTemplate(record.review), null, 2) + '\n');
+    await writeAtomic(join(dir, 'inputs/agent-review.template.json'), JSON.stringify({
+      jobId: record.id, attemptId: randomUUID(), candidateHash: record.review.candidateHash, referenceHash: record.review.referenceHash,
+      reviewerModel: '', verdict: 'pending', findings: [], verifiedRegions: record.review.regions.map(crop => crop.join(',')),
+      feedback: '', checks: evidenceTemplate(record.review),
+    }, null, 2) + '\n');
   } else if (item.kind === 'reduction') {
     const merged = join(dir, 'inputs/merged.svg');
     await writeMergedPreview(plan.run, item.layerIds ?? [], plan.canvas, merged);
@@ -201,7 +207,8 @@ async function instructions(plan: Plan, item: PlanItem, dir: string, record: Job
     '制作归属：人物素体不包含任何穿戴配饰，全部配饰统一归衣物绘制管线；素体分组、轮廓、拆分、审查和栅格均不得重新补回。后文提及饰件的规则仅在衣物/配饰任务中适用。角色自身的天然耳朵、角、尾巴和翅膀仍是本体结构。',
     '先读本次操作步骤，再读后面的绘制正文。正文中的“结束/只回复”仅结束当前判断或绘制环节，不替代 CLI 提交，也不结束整个任务循环。',
     '只写本 job 的 out 草稿和本步明确指定的参考/栅格交付目录；正式 SVG、groups.json、job.json、观测与完成标记由程序维护。',
-    '预览命令只生成并登记图片；必须打开输出路径的 PNG 实际看图。改稿后重新预览，不能编辑 observations.json 代替看图。',
+    '预览命令只生成并登记图片；必须使用宿主 Agent 的原生图片工具打开 PNG 实际看图。图片必须作为多模态输入，禁止将图片 Base64/工具图片 JSON 当文本读入上下文，禁止输出 Base64 到 shell/聊天。改稿后重新预览，不能编辑 observations.json 代替看图。',
+    '同一候选版本中，每批只读当前检查需要的视图，及时把具体发现及已核对区域写入 out/progress.md；不要反复重读未变化的图。上下文不足时使用 handoff --job 保存路径与哈希，在新会话中读取交接文件与本任务包，重新打开本轮必须核对的图片；不得降低必查区域、复用旧哈希结论或自动 pass。',
     '', '## 执行步骤',
   ];
   if (item.kind !== 'preparation' && item.kind !== 'raster' && item.kind !== 'raster-review') {
@@ -292,7 +299,7 @@ async function instructions(plan: Plan, item: PlanItem, dir: string, record: Job
       commands([preview('svg'), preview('blend'), preview('edge'), submit]));
   } else if (item.kind === 'review' || item.kind === 'completion-review') {
     lines.push('', '## 必做审查与通过证据',
-      '默认由现有具备识图能力的 Agent 执行审核。用户当前使用的 DeepSeek Flash Agent 可承担此角色；GPT Image 2.5 Sunburst/Flare 用于生图或改图。无需额外配置 L2D_REVIEW_MODEL，也无需用户手工填写审核 JSON；由审核 Agent 看图后写证据并 submit。',
+      '默认由现有具备识图能力的 Agent 执行审核。用户当前使用的 DeepSeek Flash Agent 可承担此角色；GPT Image 2.5 Sunburst/Flare 用于生图或改图。不配置独立审核模型，也无需用户手工填写审核 JSON；由审核 Agent 看图后写证据并 submit。',
       '绘制与审核职责隔离：宿主执行者将本任务包交给独立审核会话，允许继续使用同一种 Agent 模型。审核者只读参考与候选，只写当前 job/out 下的证据和报告；不能直接改候选 SVG。当前会话若刚负责绘制，应交接任务包，不能把绘制者的自检当作独立审核。',
       '先确认具备实际看图能力。无视觉通道或环境禁止图片进入上下文时报告 blocked，禁止用颜色统计、掩膜、IoU、覆盖率代替视觉审查并提交 pass。',
       `先看 ${record.inputs.reference} 的原图，再运行并实际打开整图独显、叠加和红色边缘图：`,
@@ -306,12 +313,11 @@ async function instructions(plan: Plan, item: PlanItem, dir: string, record: Job
       `通过证据模板：${join(dir, 'inputs/review-checks.template.json')}。在 ${join(dir, 'out/review-checks.json')} 填写当前 candidateHash/referenceHash、六项检查的 verdict/detail 和全部选框的实际核对依据；pending/空白不能通过。`,
       '六项分别为 silhouette（外形/异常延伸）、ownership（职责归属）、coverage（应有部件完整性）、holes（真实孔洞与误挖空）、connections（接缝与搭接）、accessories（配饰归属）。detail 必须写图像位置、参考依据与判断，不填“可以/整体一致”。',
       '有明确问题应给 revise，在 feedback 中一次列出问题编号、原图坐标/区域、当前形状、参考依据和应改方式；不能为了凑通过证据把疑点写成 pass。无法核对给 blocked 并报告。',
+      `结构化报告模板：${join(dir, 'inputs/agent-review.template.json')}；Agent 可在 out/agent-review.json 填实际模型名、结论、缺陷和已核对区域，提交时加 --report ${jsonFile('agent-review.json')}。findings 每项须有 id/rule/severity/region/description/evidence/repairInstruction/targetStage/status；原图 region 为 [x,y,width,height]。严重未解决缺陷不能 pass，上游缺陷应 blocked，Agent 不得自行 accepted。pass 的 --checks 仍必需。`,
       commands([`${submit} --verdict revise --feedback '填写具体问题与坐标、图像依据和修改要求'`]),
       '只有整图、局部和六项检查全部通过时才执行：',
       commands([`${submit} --verdict pass --checks ${jsonFile('review-checks.json')} --feedback '填写逐项检查结论与证据摘要'`]),
-      '候选或参考变化后，旧证据失效，必须重新领取、预览和填写；轮数耗尽但未通过时系统阻塞，不会自动定稿。',
-      '可选 API 自动审核模式：仅在明确选择该模式且已配置 APIYI_API_KEY 与 L2D_REVIEW_MODEL 时，使用下面的 review run 替代上述 Agent 审核。它完成后直接 next，不重复 submit；默认 Agent 审核不运行此命令，缺少这项可选配置不是默认流程的阻塞原因。',
-      commands([`${cli} review run --job ${quote(dir)}`]));
+      '候选或参考变化后，旧证据失效，必须重新领取、预览和填写；轮数耗尽但未通过时系统阻塞，不会自动定稿。');
   } else if (item.kind === 'raster-review') {
     lines.push('', '## 看图与提交结论', '默认交给现有具备识图能力且能实际操作 Krita 的 Agent 独立审核会话；不要求另配审核模型 API，绘制者的自检不能替代此审核。', commands([preview('blend'), `${submit} --verdict pass --feedback '填写逐项核对依据'`]),
       '按实际检查将 pass 改为 revise 或 blocked，必须填写具体 feedback。revise 后由 next 派发返修。',

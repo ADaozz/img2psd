@@ -201,17 +201,25 @@ node src/cli/main.ts imagegen --prompt "..." --out <png> [--ref <png> ...]
 
 ## 默认 Agent 视觉审核
 
-使用现有 Agent 的图片理解能力。用户当前以具备识图能力的 DeepSeek Flash 作为执行 Agent；GPT Image 2.5 Sunburst/Flare 单独负责生图/改图。审核由宿主交给独立会话执行，可使用同一种 Agent 模型，不要求更换模型或额外配置 `L2D_REVIEW_MODEL`。
+使用现有 Agent 的图片理解能力。用户当前以具备识图能力的 DeepSeek Flash 作为执行 Agent；GPT Image 2.5 Sunburst/Flare 单独负责生图/改图。审核由宿主交给独立会话执行，可使用同一种 Agent 模型，不要求更换模型或额外审核 API。
 
 审核 Agent 读取任务包、实际打开整图和局部预览、写 `out/review-checks.json` 及反馈，再执行 `submit`。这份 JSON 由 Agent 自动填写，用户不用手写。绘制 Agent 负责接收反馈和返修；审核者不得直接修改候选。程序校验并发布事实，不负责创建宿主 Agent 会话；没有会话隔离能力时应报告具体限制，不能把自检冒充独立审核。没有实际视觉输入时仍必须 blocked。
 
-## 独立 API 视觉审核（可选执行入口）
+## 图片上下文与断点交接
 
-SVG 的 review/completion-review 可由 `node src/cli/main.ts review run --job <目录>` 自动生成审查包并调用独立图片理解模型。整图与局部模型调用属于同一轮质量审核；程序仍负责验证和发布。绘制者不负责填写该次自动审核 JSON，仍用 next 领取返修和后续任务。模型失败写 blocked，不伪造质量结论。栅格仍需具备 Krita 能力的独立审核者，自动 PNG 模型不能证明 KRA 图层正确。
+读图全部交给现有 Agent；仓库不接 LangChain 或独立视觉模型客户端。图片通过宿主原生多模态工具进入 Agent，不能用读取二进制文本、打印 Base64 或把图片工具 JSON 字符串化的方式代替看图。
 
-默认 `Review-01 → Repair-01 → Review-02 → Repair-02 → Review-03`；`--review-rounds 1..3` 可降低预算。最后一次 revise 直接 exhausted，不派发没有验收机会的返修。blocked 必须排障后用 `review reopen --job <目录> --reason <故障排除依据>` 显式恢复；exhausted 只能经人工明确授权后用 `review retry --job <目录> --reason <授权原因>` 开启新周期，执行 agent 不能自行补充授权。`review history --job <目录>` 查看预算、历史结论和最近调用诊断。
+分批核对当前所需视图，把原图坐标、具体缺陷、已检查区域及对应候选/参考哈希及时写入当前 job/out/progress.md。不要重复打开未变的图；候选或参考改变后必须重新检查。上下文不足时：
 
-仅选择上述 API 审核模式时需要配置：`APIYI_API_KEY`、`L2D_REVIEW_MODEL`，可选 `APIYI_BASE_URL`、`L2D_REVIEW_TIMEOUT_MS`。审核模型必须支持多图理解和文本 JSON；Sunburst/Flare 继续用于图片生成。默认请求 JSON object，服务不支持该参数时可显式设 `L2D_REVIEW_JSON_MODE=prompt`，本地仍严格校验；不自动降低校验要求。完整状态、产物和验收限制见 [REVIEW-WORKFLOW.md](REVIEW-WORKFLOW.md)。
+```bash
+node src/cli/main.ts handoff --job <当前job目录>
+```
+
+程序只在 job/out/handoff.json 保存输入、草稿、报告及证据文件的路径、哈希和可用性，不读图判断、不发送模型请求、不清空观察记录、不改变审查结论或预算。新 Agent 会话读取该清单、本任务包、progress.md 和正式审查历史，打开本轮需要的实际图片，按 submit/next 继续。交接清单不是检查通过证据。
+
+默认 `Review-01 → Repair-01 → Review-02 → Repair-02 → Review-03`；`--review-rounds 1..3` 可降低预算。最后一次 revise 直接 exhausted。blocked 排障后用 `review reopen --job <目录> --reason <故障排除依据>` 显式恢复；exhausted 只能经人工授权用 `review retry --reason ...` 开启新周期。`review history` 查看历史与预算。
+
+工具传输故障应保留现场并停止，不能降级成像素统计审查。宿主的请求归因日志和本仓库交付证据分开处理，详见 [Agent 图片上下文](AGENT-IMAGE-CONTEXT.md) 与 [审核工作流](REVIEW-WORKFLOW.md)。
 
 ## 上游提示词核对
 

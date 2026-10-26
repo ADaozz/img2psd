@@ -114,8 +114,8 @@ node src/cli/main.ts validate --run ../.run/my-character/part-layering   # 136 �
 - 管线测试数据写入 `.run/`，图片测试使用系统临时目录，结束即清理，不触碰工作区已有产物。
 
 
-## 独立视觉审核
+## Agent 视觉审核
 
-默认由现有具备识图能力的 Agent 在独立审核会话中查看整图、局部和参考，自动填写证据后 submit；用户当前使用 DeepSeek Flash，无需额外配置审核模型。GPT Image 2.5 Sunburst 负责生图/改图。默认三审两修，只有 pass 放行，blocked/exhausted 停止下游；栅格还需实际 Krita 审查。
+所有读图与审核都由现有具备识图能力的 Agent 完成；GPT Image 2.5 Sunburst 负责生图/改图。仓库只生成预览、校验证据、维护三审两修及 pass 放行状态，不接 LangChain 或独立视觉 API。审核交给独立 Agent 会话，JSON 由 Agent 填写；栅格还需实际 Krita 审查。
 
-如显式选择独立 API 审核，可配置 `APIYI_API_KEY` 与 `L2D_REVIEW_MODEL` 后调用 `node src/cli/main.ts review run --job <review目录>`。该接口是可选入口，未配置它不影响默认 Agent 审核。恢复、人工新周期及验收状态见 [审核工作流](docs/REVIEW-WORKFLOW.md)。
+上下文不足时执行 `node src/cli/main.ts handoff --job <目录>` 保存路径与哈希，在新 Agent 会话续跑。图片必须通过宿主原生多模态工具查看，不能把 Base64 当文本。见 [图片上下文排障](docs/AGENT-IMAGE-CONTEXT.md) 与 [审核工作流](docs/REVIEW-WORKFLOW.md)。

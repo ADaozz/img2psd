@@ -1,4 +1,4 @@
-import { readFile, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readJob, type JobRecord } from './materialize.ts';
 import { readReviewReport, writeReviewReport, reviewPhase, qualityRounds } from '../facts/review.ts';
@@ -23,6 +23,5 @@ export async function reviewControl(jobDir: string, action: 'history' | 'reopen'
     await writeReviewReport(path, report);
     if (job.kind === 'raster-review') await rm(join(job.run, job.groupId, '.completed'), { force: true });
   }
-  const attempts = await readFile(join(jobDir, 'last-review-attempt.json'), 'utf8').then(JSON.parse, () => undefined);
-  return { path, phase: reviewPhase(report, job.reviewRounds ?? 3), qualityRounds: qualityRounds(report), report, lastAttempt: attempts };
+  return { path, phase: reviewPhase(report, job.reviewRounds ?? 3), qualityRounds: qualityRounds(report), report };
 }

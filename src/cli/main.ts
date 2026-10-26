@@ -17,7 +17,7 @@ import { materialize, readJob } from '../core/jobs/materialize.ts';
 import { appendObservation } from '../core/jobs/observations.ts';
 import { submit as submitJob } from '../core/jobs/submit.ts';
 import { imageGenerate, upscale as upscaleImage, canonicalModel, previewApiyi, providerForModel, resolveBackendName, taskModel } from '../agents/image.ts';
-import { runReview } from '../core/jobs/review-runner.ts';
+import { writeHandoff } from '../core/jobs/handoff.ts';
 import { reviewControl } from '../core/jobs/review-control.ts';
 import { loadRasterConfig, upstreamDirectory } from '../core/raster/config.ts';
 
@@ -273,7 +273,7 @@ async function next(args: string[]) {
 async function submitCmd(args: string[]) {
   const { values } = parseArgs({ args, options: {
     job: { type: 'string' }, svg: { type: 'string' }, verdict: { type: 'string' },
-    feedback: { type: 'string' }, paths: { type: 'string' }, note: { type: 'string' },
+    report: { type: 'string' }, feedback: { type: 'string' }, paths: { type: 'string' }, note: { type: 'string' },
     group: { type: 'string' }, children: { type: 'string' }, levels: { type: 'string' },
     checks: { type: 'string' }, groups: { type: 'string' }, subject: { type: 'string' }, json: { type: 'boolean' },
   } });
@@ -281,6 +281,7 @@ async function submitCmd(args: string[]) {
   const result = await submitJob(resolve(values.job), {
     ...(values.svg ? { svg: values.svg } : {}),
     ...(values.verdict ? { verdict: values.verdict as 'pass' | 'revise' | 'blocked' } : {}),
+    ...(values.report ? { report: values.report } : {}),
     ...(values.feedback ? { feedback: values.feedback } : {}),
     ...(values.paths !== undefined ? { paths: values.paths } : {}),
     ...(values.note ? { note: values.note } : {}),
@@ -301,14 +302,21 @@ async function submitCmd(args: string[]) {
   return 0;
 }
 
+async function handoffCmd(args: string[]) {
+  const { values } = parseArgs({ args, options: { job: { type: 'string' }, json: { type: 'boolean' } } });
+  if (!values.job) throw new Error('handoff 需要 --job');
+  const result = await writeHandoff(resolve(values.job));
+  console.log(values.json ? JSON.stringify(result, null, 2) : `已保存交接清单：${result.path}`);
+  return 0;
+}
+
 async function reviewCmd(args: string[]) {
   const [action, ...rest] = args;
-  if (!['run', 'reopen', 'retry', 'history'].includes(action)) throw new Error('review 需要 run|reopen|retry|history');
+  if (!['reopen', 'retry', 'history'].includes(action)) throw new Error('读图与审核由 Agent 执行；review 支持 reopen|retry|history');
   const { values } = parseArgs({ args: rest, options: { job: { type: 'string' }, reason: { type: 'string' } } });
   if (!values.job) throw new Error('review 需要 --job');
   const directory = resolve(values.job);
-  const result = action === 'run' ? await runReview(directory)
-    : await reviewControl(directory, action as 'reopen' | 'retry' | 'history', values.reason);
+  const result = await reviewControl(directory, action as 'reopen' | 'retry' | 'history', values.reason);
   console.log(JSON.stringify(result, null, 2));
   return 0;
 }
@@ -390,7 +398,7 @@ async function upscaleCmd(args: string[]) {
 const usage = `l2d — live2d-portable 唯一 agent 接口（核心命令不依赖 Codex）
 
   l2d next     --run <part-layering> [--review-rounds 1..3] [--expand] [--json]
-  l2d submit   --job <job 目录> [--svg <草稿>] [--verdict pass|revise|blocked --feedback ...]
+  l2d submit   --job <job 目录> [--svg <草稿>] [--verdict pass|revise|blocked --feedback ...] [--report @agent-review.json]
                [--paths '<JSON 数组>' | --paths @paths.json --note "补全依据"]
                [--group <组ID> --svg <文件> | --note "去重依据"]
                [--children '<JSON 数组>' --note "拆分依据"]
@@ -403,7 +411,8 @@ const usage = `l2d — live2d-portable 唯一 agent 接口（核心命令不依�
   l2d validate --run <part-layering> [--stage outline|reduction|completion|all] [--json]
   l2d check    --svg <file> --group <id> [--canvas 1024x1536] [--parent <svg>] [--allow-empty] [--json]
   l2d merge    --run <part-layering> --out <preview.svg> [--depth N] [--partial]
-  l2d review   run|history|reopen|retry --job <job> [--reason <恢复或人工授权原因>]
+  l2d handoff  --job <job> [--json]  # 保存文件路径与哈希，交给新 Agent 会话
+  l2d review   history|reopen|retry --job <job> [--reason <恢复或人工授权原因>]
   l2d imagegen --prompt <文本> | --prompt-file <f> --out <png> [--ref <png> ...] [--size WxH]
                [--model gemini-nano-banana-2.1|gpt-image-2.5-sunburst|gpt-image-2.5-flare]
                [--task standardize|body_reference|fast_comparison]
@@ -429,6 +438,7 @@ async function main(argv: string[]): Promise<number> {
     case 'check': return check(rest);
     case 'preview': return preview(rest);
     case 'merge': return merge(rest);
+    case 'handoff': return handoffCmd(rest);
     case 'review': return reviewCmd(rest);
     case 'imagegen': return imagegen(rest);
     case 'upscale': return upscaleCmd(rest);

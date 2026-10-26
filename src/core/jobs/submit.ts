@@ -12,7 +12,7 @@ import { outlinePath, partPath, reductionPath, reviewPath } from './plan.ts';
 import { readJob, type JobRecord } from './materialize.ts';
 import { randomUUID } from 'node:crypto';
 import { rasterDeliverablesHash } from '../raster/hash.ts';
-import { validateVisionReport, type VisionReport } from '../../agents/vision/report.ts';
+import { validateAgentReviewReport } from '../facts/agent-review.ts';
 import { assertReviewEvidence } from './review-policy.ts';
 
 // 执行者提交的是草稿、路径、名字或结论。程序只校验并发布事实，不绘制、不调度下一步。
@@ -32,7 +32,7 @@ export type SubmitInput = {
   checks?: string;
   groups?: string;
   subject?: string;
-  reviewReport?: VisionReport;
+  report?: string;
 };
 
 async function readJson(value: string): Promise<unknown> {
@@ -120,10 +120,10 @@ async function publishReview(job: JobRecord, jobDir: string, input: SubmitInput,
     if (nextPhase !== 'review') throw new Error(`审核 ${nextPhase}，不能重复提交或绕过审核预算`);
   }
   if (input.verdict !== 'blocked' && job.deliverablesHash && job.deliverablesHash !== await rasterDeliverablesHash(job.outputDir!, job.required ?? [])) throw new Error('KRA 或其他交付在领取审核后已变化，请重新 next');
-  if (input.reviewReport) {
-    validateVisionReport(input.reviewReport, { jobId: job.id, candidateHash, referenceHash: referenceHash!, canvas: job.canvas });
-    if (input.reviewReport.verdict !== input.verdict) throw new Error('审核建议与提交结论不一致');
-  }
+  const agentReport = input.report ? validateAgentReviewReport(await readJson(input.report), {
+    jobId: job.id, candidateHash, referenceHash: referenceHash!, canvas: job.canvas,
+  }) : undefined;
+  if (agentReport && agentReport.verdict !== input.verdict) throw new Error('Agent 审核报告与提交结论不一致');
   const checks = (job.kind === 'review' || job.kind === 'completion-review') && input.verdict === 'pass'
     ? await assertReviewEvidence(jobDir, candidate, job.inputs.reference!, job.canvas,
       input.checks ? await readJson(input.checks) : undefined)
@@ -131,14 +131,15 @@ async function publishReview(job: JobRecord, jobDir: string, input: SubmitInput,
   if ((job.kind === 'review' || job.kind === 'completion-review') && input.verdict === 'pass') {
     await validateGroupSvg(candidate, job.groupId, job.canvas, job.inputs.parentSvg);
   }
-  const attemptId = input.reviewReport?.attemptId ?? randomUUID();
+  const attemptId = agentReport?.attemptId ?? randomUUID();
+  if (report.reviews.some(entry => entry.attemptId === attemptId)) throw new Error('该审核 attemptId 已发布，不能覆盖历史快照；请为新审核生成新 ID');
   const snapshot = `${reportFile}.history/${attemptId}`;
   if (bytes) await writeAtomic(join(snapshot, /\.svg$/i.test(candidate) ? 'candidate.svg' : 'candidate.png'), bytes);
   if (referenceBytes) await writeAtomic(join(snapshot, 'reference.png'), referenceBytes);
   const entry = {
-    verdict: input.verdict, feedback: input.feedback.trim() + (input.reviewReport?.findings.length ? '\n缺陷清单：\n' + JSON.stringify(input.reviewReport.findings, null, 2) : ''), referenceHash,
+    verdict: input.verdict, feedback: input.feedback.trim() + (agentReport?.findings.length ? '\n缺陷清单：\n' + JSON.stringify(agentReport.findings, null, 2) : ''), referenceHash,
     ...(checks ? { checks } : {}), attemptId, snapshot,
-    ...(input.reviewReport ? { reviewerModel: input.reviewReport.reviewerModel, report: input.reviewReport } : {}),
+    ...(agentReport ? { reviewerModel: agentReport.reviewerModel, report: agentReport } : {}),
     ...(job.kind === 'raster-review' && input.verdict !== 'blocked'
       ? { deliverablesHash: await rasterDeliverablesHash(job.outputDir!, job.required ?? []) } : {}),
     candidateHash, at: new Date().toISOString(),

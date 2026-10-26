@@ -1,13 +1,13 @@
-import { reviewItems } from '../../core/jobs/review-policy.ts';
-import type { ReviewEvidence } from '../../core/jobs/review-policy.ts';
-import type { Canvas } from '../../core/svg/validate.ts';
+import { reviewItems } from '../jobs/review-policy.ts';
+import type { ReviewEvidence } from '../jobs/review-policy.ts';
+import type { Canvas } from '../svg/validate.ts';
 
 export type ReviewFinding = {
   id: string; rule: typeof reviewItems[number]; severity: 'critical' | 'major' | 'minor';
   region: [number, number, number, number]; description: string; evidence: string; repairInstruction: string;
   targetStage: 'outline' | 'completion' | 'upstream' | 'raster'; status: 'open' | 'resolved' | 'accepted';
 };
-export type VisionReport = {
+export type AgentReviewReport = {
   jobId: string; attemptId: string; candidateHash: string; referenceHash: string; reviewerModel: string;
   verdict: 'pass' | 'revise' | 'blocked'; findings: ReviewFinding[]; verifiedRegions: string[];
   feedback: string; checks: ReviewEvidence;
@@ -15,11 +15,11 @@ export type VisionReport = {
 const nonempty = (x: unknown): x is string => typeof x === 'string' && !!x.trim();
 
 // Accepted exceptions require a separate human record. Models cannot grant themselves an exception.
-export function validateVisionReport(value: unknown, expected: {
+export function validateAgentReviewReport(value: unknown, expected: {
   jobId: string; candidateHash: string; referenceHash: string; canvas: Canvas; attemptId?: string; model?: string;
-}): VisionReport {
+}): AgentReviewReport {
   if (!value || typeof value !== 'object') throw new Error('审核报告必须是 JSON 对象');
-  const report = value as VisionReport;
+  const report = value as AgentReviewReport;
   for (const field of ['jobId', 'attemptId', 'candidateHash', 'referenceHash', 'reviewerModel', 'feedback'] as const) {
     if (!nonempty(report[field])) throw new Error(`审核报告缺少 ${field}`);
   }

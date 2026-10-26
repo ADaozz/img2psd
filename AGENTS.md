@@ -11,7 +11,9 @@
 3. 实际打开 preview 生成的图片；修改草稿后重新 preview。通过 submit 提交路径、名字、草稿或结论。仅最终提交成功后继续 next，中间的 --paths、--levels、--group 不是本 job 完成。
 4. 无待办时检查 blocked 和 status；有阻塞、没有所需能力、缺密钥或无法核对时停止并报告具体路径及原因。SVG 及栅格审批遇到 blocked 或 exhausted 会阻塞，不能以已返修作为通过。SVG review 与 completion-review 的 pass 都须按任务包提交 --checks 证据，补全审查通过后才能继续拆层。区分 part 阶段完成与整个 Krita 交付完成。
 
-默认三审两修，最后一次 revise 直接 exhausted；blocked 不计质量轮数。默认由现有具备识图能力的 Agent（用户当前使用 DeepSeek Flash）在独立审核会话中看图并提交证据，无需另配 L2D_REVIEW_MODEL，JSON 由 Agent 填写。GPT Image 2.5 负责生图/改图。审核者只读候选，不能由绘制者在原会话自审代替。`review run` 是显式选择、另配模型的可选 API 审核入口。故障排除后 `review reopen --reason ...`；开启新周期的 `review retry` 必须有人工明确授权，agent 不得自己编造授权或自动扩大预算。用 `review history` 查看现场。独立审核配置与实机验收限制见 `docs/REVIEW-WORKFLOW.md`。
+默认三审两修，最后一次 revise 直接 exhausted；blocked 不计质量轮数。所有读图、视觉判断与审核都由现有 Agent（用户当前使用具备识图能力的 DeepSeek Flash）完成；GPT Image 2.5 只负责生图/改图。本仓库不接 LangChain、独立视觉 API 或第二套模型审核框架。审核者使用独立会话，候选只读；证据 JSON 由 Agent 填写。故障排除后 `review reopen --reason ...`；`review retry` 开新周期必须有人工明确授权，不能自行扩大预算。`review history` 查看现场。
+
+用宿主原生图片工具实际查看 PNG；禁止把图片 Base64 或包含图片的工具 JSON 作为普通文本读入会话。磁盘 observations 没有重复路径，不能证明会话没有重复携带图片。及时在当前 job/out/progress.md 保存检查范围和缺陷；上下文不足时执行 `handoff --job <目录>`，在新 Agent 会话从交接文件续跑，不重放整段含图历史。不能因上下文问题省略必查区域或自动 pass。具体诊断边界见 `docs/AGENT-IMAGE-CONTEXT.md`。
 
 ## 约定
 
