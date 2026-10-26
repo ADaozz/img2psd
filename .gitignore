@@ -2,6 +2,8 @@ node_modules/
 .pnpm-store/
 .run/
 jobs/
+!src/core/jobs/
+!src/core/jobs/**
 *.draft.svg
 .env
 vendor/live2d-maker/node_modules/
