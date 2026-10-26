@@ -26,7 +26,7 @@
       "review": {
         "prompt": "02-review.md",
         "repairPrompt": "02-repair.md",
-        "maxRounds": 2
+        "maxRounds": 3
       }
     }
   ]

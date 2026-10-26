@@ -165,7 +165,7 @@ node src/cli/main.ts preview --job <review job> --mode blend
 node src/cli/main.ts submit  --job <review job> --verdict pass|revise|blocked --feedback "..."
 ```
 
-`revise` 会派发返修 job（同一交付清单，附 review 意见）；`pass` 才写 `.completed`，本轮只调整 SVG 轮廓及补全审批，栅格仍沿用轮数用完按 repaired 定稿的旧行为；执行者不能将该状态当作质量通过，后续待测试再调整。
+`revise` 在预算剩余时派发返修 job（同一交付清单，附 review 意见）；只有 `pass` 写 `.completed`。默认三次审核、两次返修，最后仍未通过进入 `exhausted`，不再按 repaired 定稿；blocked 不消耗质量轮次。旧完成标记会核对当前候选、参考图和全部交付文件（含 KRA）的哈希，失效时停止放行。
 下一步骤的 `inputs` 未就绪时只报阻塞，不提前派发。
 
 ## 图片生成与放大（可选）
@@ -180,7 +180,7 @@ node src/cli/main.ts imagegen --prompt "..." --out <png> [--ref <png> ...]
 - `api`：`L2D_IMAGE_BASE_URL`、`L2D_IMAGE_API_KEY`、可选 `L2D_IMAGE_MODEL`
 - `apiyi`：`APIYI_API_KEY`（必填，不可下发到浏览器）、可选 `APIYI_BASE_URL`（默认 `https://api.apiyi.com`）、`APIYI_TIMEOUT_MS`（默认 300000）
 - 这些变量可写在项目根目录 `.env`（自动加载，已 gitignore）；命令行同名变量优先
-- API易模型与任务：`--task standardize` → `gemini-nano-banana-2.1`；`--task body_reference` → `gpt-image-2.5-sunburst`；`--task fast_comparison` → `gpt-image-2.5-flare`。这三条都是图生图，必须有 `--ref`。默认严格保持原图画布；比例接近但像素不同、且允许补边时加 `--loose`
+- API易模型与任务：`--task standardize` → `gpt-image-2.5-sunburst`；`--task body_reference` → `gpt-image-2.5-sunburst`；`--task fast_comparison` → `gpt-image-2.5-flare`。这三条都是图生图，必须有 `--ref`。默认严格保持原图画布；比例接近但像素不同、且允许补边时加 `--loose`
 - 简化与素体都加 `--background transparent`，必须交付带真实 Alpha 的透明 PNG。GPT 请求原生透明并校验返回像素；Nano Banana 使用工具层双背景恢复（最多两次生图，网络重试另计），原生 Alpha 优先。禁止单背景色键去背或 rematte。每次透明请求在输出旁保留独立诊断目录，失败不覆盖交付文件。
 
 ## 目录
@@ -198,6 +198,20 @@ node src/cli/main.ts imagegen --prompt "..." --out <png> [--ref <png> ...]
     observations.json          程序登记的观测
     result.json                提交后的事实
 ```
+
+## 默认 Agent 视觉审核
+
+使用现有 Agent 的图片理解能力。用户当前以具备识图能力的 DeepSeek Flash 作为执行 Agent；GPT Image 2.5 Sunburst/Flare 单独负责生图/改图。审核由宿主交给独立会话执行，可使用同一种 Agent 模型，不要求更换模型或额外配置 `L2D_REVIEW_MODEL`。
+
+审核 Agent 读取任务包、实际打开整图和局部预览、写 `out/review-checks.json` 及反馈，再执行 `submit`。这份 JSON 由 Agent 自动填写，用户不用手写。绘制 Agent 负责接收反馈和返修；审核者不得直接修改候选。程序校验并发布事实，不负责创建宿主 Agent 会话；没有会话隔离能力时应报告具体限制，不能把自检冒充独立审核。没有实际视觉输入时仍必须 blocked。
+
+## 独立 API 视觉审核（可选执行入口）
+
+SVG 的 review/completion-review 可由 `node src/cli/main.ts review run --job <目录>` 自动生成审查包并调用独立图片理解模型。整图与局部模型调用属于同一轮质量审核；程序仍负责验证和发布。绘制者不负责填写该次自动审核 JSON，仍用 next 领取返修和后续任务。模型失败写 blocked，不伪造质量结论。栅格仍需具备 Krita 能力的独立审核者，自动 PNG 模型不能证明 KRA 图层正确。
+
+默认 `Review-01 → Repair-01 → Review-02 → Repair-02 → Review-03`；`--review-rounds 1..3` 可降低预算。最后一次 revise 直接 exhausted，不派发没有验收机会的返修。blocked 必须排障后用 `review reopen --job <目录> --reason <故障排除依据>` 显式恢复；exhausted 只能经人工明确授权后用 `review retry --job <目录> --reason <授权原因>` 开启新周期，执行 agent 不能自行补充授权。`review history --job <目录>` 查看预算、历史结论和最近调用诊断。
+
+仅选择上述 API 审核模式时需要配置：`APIYI_API_KEY`、`L2D_REVIEW_MODEL`，可选 `APIYI_BASE_URL`、`L2D_REVIEW_TIMEOUT_MS`。审核模型必须支持多图理解和文本 JSON；Sunburst/Flare 继续用于图片生成。默认请求 JSON object，服务不支持该参数时可显式设 `L2D_REVIEW_JSON_MODE=prompt`，本地仍严格校验；不自动降低校验要求。完整状态、产物和验收限制见 [REVIEW-WORKFLOW.md](REVIEW-WORKFLOW.md)。
 
 ## 上游提示词核对
 

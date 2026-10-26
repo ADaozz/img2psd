@@ -432,13 +432,6 @@ test('review blocked 或返修耗尽轮数均阻塞下游，不能当作通过',
       plan = JSON.parse((await l2d('next', '--run', runDir, '--review-rounds', '1', '--json')).stdout);
       await l2d('preview', '--job', plan.jobs[0].dir, '--mode', 'blend');
       await l2d('submit', '--job', plan.jobs[0].dir, '--verdict', verdict, '--feedback', '测试明确拒绝本次候选');
-      if (verdict === 'revise') {
-        plan = JSON.parse((await l2d('next', '--run', runDir, '--review-rounds', '1', '--json')).stdout);
-        assert.equal(plan.jobs[0].reason, 'repair');
-        await writeFile(plan.jobs[0].draft, square(18));
-        await l2d('preview', '--job', plan.jobs[0].dir, '--mode', 'blend');
-        await l2d('submit', '--job', plan.jobs[0].dir);
-      }
       plan = JSON.parse((await l2d('next', '--run', runDir, '--review-rounds', '1', '--json')).stdout);
       assert.equal(plan.jobs.length, 0);
       assert.match(plan.blocked[0].message, /review.*未.*通过|review.*无通过/);

@@ -10,6 +10,7 @@ import {
   jobDirectory, outlinePath, type Plan, type PlanItem,
 } from './plan.ts';
 import type { Canvas } from '../svg/validate.ts';
+import { rasterDeliverablesHash } from '../raster/hash.ts';
 import { loadRasterConfig, upstreamDirectory } from '../raster/config.ts';
 import { reviewPlan, evidenceTemplate } from './review-policy.ts';
 import { groupPrompt, groupReferences, type GroupStage } from './group-prompts.ts';
@@ -48,6 +49,7 @@ export type JobRecord = {
     source?: string;
     merged?: string;
     deliverable?: string;
+    beforeCompletion?: string;
   };
   output: { draft: string; published?: string };
   draftHash?: string;
@@ -55,6 +57,8 @@ export type JobRecord = {
   layerIds?: string[];
   depth?: number;
   candidateHash?: string;
+  referenceHash?: string;
+  deliverablesHash?: string;
   review?: Awaited<ReturnType<typeof reviewPlan>>;
   required?: string[];
   outputDir?: string;
@@ -105,7 +109,7 @@ export async function materialize(plan: Plan, item: PlanItem, maxRounds: number,
     ...(item.required ? { required: item.required } : {}),
     ...(item.outputDir ? { outputDir: item.outputDir } : {}),
     ...(item.expectsReview ? { expectsReview: true } : {}),
-    ...(item.reviewRounds ? { reviewRounds: item.reviewRounds } : {}),
+    reviewRounds: item.reviewRounds ?? maxRounds,
     ...(prior.proposal ? { proposal: prior.proposal } : {}),
   };
 
@@ -130,6 +134,7 @@ export async function materialize(plan: Plan, item: PlanItem, maxRounds: number,
     record.inputs.source = item.prefill;
     record.output.draft = item.prefill ?? draft;
     record.output.published = join(plan.run, item.kind === 'completion-review' ? 'stages/completion-review' : 'stages/review', `${item.groupId}.review.json`);
+    if (item.kind === 'completion-review' && item.source) record.inputs.beforeCompletion = item.source;
     if (item.kind === 'review' && item.source) record.inputs.parentSvg = item.source;
     if (item.prefill) record.candidateHash = svgHash(await readFile(item.prefill));
     record.review = await reviewPlan(record.inputs.candidate!, reference, plan.canvas);
@@ -171,9 +176,13 @@ export async function materialize(plan: Plan, item: PlanItem, maxRounds: number,
     record.inputs.candidate = item.kind === 'raster-review' ? (item.deliverable ?? record.inputs.reference) : (item.outputDir ?? draft);
     record.inputs.deliverable = item.deliverable;
     record.output.published = item.outputDir;
-    if (item.kind === 'raster-review' && item.deliverable) record.candidateHash = bytesHash(await readFile(item.deliverable));
+    if (item.kind === 'raster-review' && item.deliverable) {
+      record.candidateHash = bytesHash(await readFile(item.deliverable));
+      record.deliverablesHash = await rasterDeliverablesHash(item.outputDir!, item.required ?? []);
+    }
   }
 
+  if (record.inputs.reference) record.referenceHash = bytesHash(await readFile(record.inputs.reference));
   await writeAtomic(join(dir, 'job.json'), JSON.stringify(record, null, 2) + '\n');
   await writeAtomic(join(dir, 'INSTRUCTIONS.md'), await instructions(plan, item, dir, record, maxRounds, expand));
   return record;
@@ -283,6 +292,8 @@ async function instructions(plan: Plan, item: PlanItem, dir: string, record: Job
       commands([preview('svg'), preview('blend'), preview('edge'), submit]));
   } else if (item.kind === 'review' || item.kind === 'completion-review') {
     lines.push('', '## 必做审查与通过证据',
+      '默认由现有具备识图能力的 Agent 执行审核。用户当前使用的 DeepSeek Flash Agent 可承担此角色；GPT Image 2.5 Sunburst/Flare 用于生图或改图。无需额外配置 L2D_REVIEW_MODEL，也无需用户手工填写审核 JSON；由审核 Agent 看图后写证据并 submit。',
+      '绘制与审核职责隔离：宿主执行者将本任务包交给独立审核会话，允许继续使用同一种 Agent 模型。审核者只读参考与候选，只写当前 job/out 下的证据和报告；不能直接改候选 SVG。当前会话若刚负责绘制，应交接任务包，不能把绘制者的自检当作独立审核。',
       '先确认具备实际看图能力。无视觉通道或环境禁止图片进入上下文时报告 blocked，禁止用颜色统计、掩膜、IoU、覆盖率代替视觉审查并提交 pass。',
       `先看 ${record.inputs.reference} 的原图，再运行并实际打开整图独显、叠加和红色边缘图：`,
       commands([preview('svg'), preview('blend'), preview('edge')]),
@@ -298,11 +309,13 @@ async function instructions(plan: Plan, item: PlanItem, dir: string, record: Job
       commands([`${submit} --verdict revise --feedback '填写具体问题与坐标、图像依据和修改要求'`]),
       '只有整图、局部和六项检查全部通过时才执行：',
       commands([`${submit} --verdict pass --checks ${jsonFile('review-checks.json')} --feedback '填写逐项检查结论与证据摘要'`]),
-      '候选或参考变化后，旧证据失效，必须重新领取、预览和填写；轮数耗尽但未通过时系统阻塞，不会自动定稿。');
+      '候选或参考变化后，旧证据失效，必须重新领取、预览和填写；轮数耗尽但未通过时系统阻塞，不会自动定稿。',
+      '可选 API 自动审核模式：仅在明确选择该模式且已配置 APIYI_API_KEY 与 L2D_REVIEW_MODEL 时，使用下面的 review run 替代上述 Agent 审核。它完成后直接 next，不重复 submit；默认 Agent 审核不运行此命令，缺少这项可选配置不是默认流程的阻塞原因。',
+      commands([`${cli} review run --job ${quote(dir)}`]));
   } else if (item.kind === 'raster-review') {
-    lines.push('', '## 看图与提交结论', commands([preview('blend'), `${submit} --verdict pass --feedback '填写逐项核对依据'`]),
+    lines.push('', '## 看图与提交结论', '默认交给现有具备识图能力且能实际操作 Krita 的 Agent 独立审核会话；不要求另配审核模型 API，绘制者的自检不能替代此审核。', commands([preview('blend'), `${submit} --verdict pass --feedback '填写逐项核对依据'`]),
       '按实际检查将 pass 改为 revise 或 blocked，必须填写具体 feedback。revise 后由 next 派发返修。',
-      '栅格流程本轮未调整：遇到 blocked 仍须停止并报告，不能将程序的轮次结束当成质量通过。');
+      '只有 pass 可以写完成标记；blocked 不消耗质量轮次，exhausted 停止下游。故障排除后使用 review reopen；人工开启新周期使用 review retry 并记录原因。');
   } else if (item.kind === 'completion') {
     lines.push('', '## 新增路径与提交',
       `在 ${join(dir, 'out/paths.json')} 写新增路径数组，每项 {"d":"闭合路径","fillRule":"nonzero"}，无需新增则写 []。不要直接修改合成草稿或只读底稿。`,

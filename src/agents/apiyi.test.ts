@@ -319,8 +319,8 @@ test('CLI：dry-run 不泄露密钥，真实请求按模型走两条协议', asy
       '--ref', join(directory, 'ref.png'), '--ref', join(directory, 'extra.png'),
       '--out', join(directory, 'dry.png'), '--dry-run',
     ], env);
-    assert.match(preview.stdout, /gemini-native/);
-    assert.match(preview.stdout, /gemini-nano-banana-2.1/);
+    assert.match(preview.stdout, /openai-images/);
+    assert.match(preview.stdout, /gpt-image-2.5-sunburst/);
     assert.doesNotMatch(preview.stdout, /sk-cli-secret/);
     assert.doesNotMatch(preview.stdout, new RegExp(source.toString('base64').slice(0, 40)));
     assert.equal(calls.length, 0);

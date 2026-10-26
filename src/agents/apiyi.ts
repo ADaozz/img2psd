@@ -84,7 +84,7 @@ export const APIYI_MODELS = [
 ] as const;
 
 export const APIYI_TASKS = {
-  standardize: 'gemini-nano-banana-2.1',
+  standardize: 'gpt-image-2.5-sunburst',
   body_reference: 'gpt-image-2.5-sunburst',
   fast_comparison: 'gpt-image-2.5-flare',
 } as const;
@@ -566,7 +566,7 @@ export async function imageEditRequestFromJob(job: ImageGenerateJob, fallbackMod
 }
 
 export async function previewApiyi(job: ImageGenerateJob, options: { baseUrl?: string; model?: string } = {}): Promise<Record<string, unknown>> {
-  const request = await imageEditRequestFromJob(job, options.model || 'gemini-nano-banana-2.1');
+  const request = await imageEditRequestFromJob(job, options.model || 'gpt-image-2.5-sunburst');
   const transparency = job.background === 'transparent'
     ? { method: isGeminiModel(request.model) ? 'native-or-dual-background' : 'native',
       maxGenerationPasses: isGeminiModel(request.model) ? 2 : 1, validatesAlphaBeforeAlignment: true }
@@ -611,7 +611,7 @@ export function apiyiBackend(config: ApiyiConfig): ImageBackend {
   return {
     name: 'apiyi',
     async imageGenerate(job: ImageGenerateJob): Promise<ImageResult> {
-      const request = await imageEditRequestFromJob(job, config.model || 'gemini-nano-banana-2.1');
+      const request = await imageEditRequestFromJob(job, config.model || 'gpt-image-2.5-sunburst');
       let transparency: { method: 'native' | 'dual-background'; artifactsDirectory: string } | undefined;
       let edited: ImageEditResult;
       if (job.background === 'transparent') {

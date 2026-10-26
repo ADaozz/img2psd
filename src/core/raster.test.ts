@@ -166,6 +166,7 @@ test('栅格 review：绘制 → review(revise) → 返修 → review(pass) 后�
     assert.equal(plan.jobs[0].reason, 'raster');
     assert.match(await readFile(join(plan.jobs[0].dir, 'INSTRUCTIONS.md'), 'utf8'), /边缘有白边/);
     assert.match(await readFile(join(plan.jobs[0].dir, 'INSTRUCTIONS.md'), 'utf8'), /请继续修复第二步工程/);
+    await writeFile(join(raster, 'step02/report.md'), '# 报告\n已重画边缘\n');
     await l2d('submit', '--job', plan.jobs[0].dir, '--note', '已重画边缘');
     const report = JSON.parse(await readFile(join(raster, 'step02/review.json'), 'utf8'));
     assert.equal(report.repairs, 1);
@@ -185,4 +186,57 @@ test('栅格 review：绘制 → review(revise) → 返修 → review(pass) 后�
   } finally {
     await rm(taskRoot, { recursive: true, force: true });
   }
+});
+
+test('栅格 blocked 无预览也可提交，耗尽不写完成标记；旧 repaired 和 KRA 变化不能放行', async () => {
+  const { taskRoot, raster, part } = await makeTask('test-raster-pass-gate');
+  const { planJobs, jobDirectory } = await import('./jobs/plan.ts');
+  const { materialize } = await import('./jobs/materialize.ts');
+  const { submit } = await import('./jobs/submit.ts');
+  const { reviewControl } = await import('./jobs/review-control.ts');
+  try {
+    const step = 'step02';
+    const directory = join(raster, step);
+    const marker = join(directory, '.completed');
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(raster, 'raster.json'), JSON.stringify({ pipeline: 'raster-layering', upstream: '../part-layering', steps: [
+      { id: step, title: 'gate fixture', prompt: '02-边缘柔化与去锯齿.md', required: ['fixture.kra', 'fixture.png', 'report.md'], review: { prompt: '02-review.md', maxRounds: 1 } },
+    ] }));
+    await writeFile(join(directory, '.drawn'), '{}');
+    await writeFile(join(directory, 'fixture.kra'), kra);
+    await writeFile(join(directory, 'report.md'), 'fixture');
+    await writeFile(join(directory, 'fixture.png'), await readFile(join(part, 'references/base-subject.png')));
+    let plan = await planJobs(raster, { maxRounds: 3, expand: false });
+    await materialize(plan, plan.items[0], 3);
+    const review = jobDirectory(raster, 'raster-review', step);
+    await submit(review, { verdict: 'blocked', feedback: 'Krita unavailable; no visual preview possible' });
+    assert.equal(await readFile(marker).catch(() => null), null);
+    plan = await planJobs(raster, { maxRounds: 3, expand: false });
+    assert.equal(plan.items.length, 0);
+    assert.match(plan.blocked[0].message, /blocked/);
+    await assert.rejects(submit(review, { verdict: 'pass', feedback: 'must not bypass block' }), /blocked/);
+    await reviewControl(review, 'reopen', 'Krita restored');
+    await l2d('preview', '--job', review, '--mode', 'blend');
+    await submit(review, { verdict: 'revise', feedback: 'fixture quality failure' });
+    plan = await planJobs(raster, { maxRounds: 3, expand: false });
+    assert.equal(plan.items.length, 0);
+    assert.match(plan.blocked[0].message, /exhausted/);
+    assert.equal(await readFile(marker).catch(() => null), null);
+    await writeFile(marker, '{"outcome":"repaired"}');
+    plan = await planJobs(raster, { maxRounds: 3, expand: false });
+    assert.deepEqual(plan.completed, []);
+    assert.equal(plan.items.length, 0);
+    await reviewControl(review, 'retry', 'explicit human authorization for fixture');
+    await writeFile(join(directory, 'fixture.kra'), Buffer.concat([kra, Buffer.from('changed-during-review')]));
+    await assert.rejects(submit(review, { verdict: 'pass', feedback: 'stale KRA must fail' }), /交付.*变化/);
+    await writeFile(join(directory, 'fixture.kra'), kra);
+    await submit(review, { verdict: 'pass', feedback: 'fixed synthetic fixture' });
+    assert.equal(JSON.parse(await readFile(marker, 'utf8')).outcome, 'pass');
+    plan = await planJobs(raster, { maxRounds: 3, expand: false });
+    assert.deepEqual(plan.completed, [step]);
+    await writeFile(join(directory, 'fixture.kra'), Buffer.concat([kra, Buffer.from('changed')]));
+    plan = await planJobs(raster, { maxRounds: 3, expand: false });
+    assert.deepEqual(plan.completed, []);
+    assert.match(plan.blocked[0].message, /exhausted/);
+  } finally { await rm(taskRoot, { recursive: true, force: true }); }
 });

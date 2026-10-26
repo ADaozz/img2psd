@@ -1,15 +1,18 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, rm } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import sharp from 'sharp';
 import { bytesHash, matchesHash, svgHash } from '../facts/hash.ts';
 import { writeAtomic, type GroupNode } from '../facts/groups.ts';
-import { readReviewReport, writeReviewReport, type Verdict } from '../facts/review.ts';
+import { readReviewReport, writeReviewReport, reviewPhase, qualityRounds, type Verdict } from '../facts/review.ts';
 import { assertCompletionPreserves, composeCompletion } from '../svg/completion.ts';
 import { writeCandidatePreview } from '../svg/candidate.ts';
 import { validateGroupSvg } from '../svg/validate.ts';
 import { assertObserved, clearObservations } from './observations.ts';
 import { outlinePath, partPath, reductionPath, reviewPath } from './plan.ts';
 import { readJob, type JobRecord } from './materialize.ts';
+import { randomUUID } from 'node:crypto';
+import { rasterDeliverablesHash } from '../raster/hash.ts';
+import { validateVisionReport, type VisionReport } from '../../agents/vision/report.ts';
 import { assertReviewEvidence } from './review-policy.ts';
 
 // 执行者提交的是草稿、路径、名字或结论。程序只校验并发布事实，不绘制、不调度下一步。
@@ -29,6 +32,7 @@ export type SubmitInput = {
   checks?: string;
   groups?: string;
   subject?: string;
+  reviewReport?: VisionReport;
 };
 
 async function readJson(value: string): Promise<unknown> {
@@ -80,6 +84,8 @@ async function publishOutline(job: JobRecord, jobDir: string): Promise<SubmitRes
   const last = report.reviews.at(-1);
   const revises = report.reviews.filter(entry => entry.verdict === 'revise').length;
   if (last?.verdict === 'revise' && !matchesHash(bytes, last.candidateHash) && report.repairs < revises) {
+    report.repairHistory ??= [];
+    report.repairHistory.push({ beforeHash: last.candidateHash, afterHash: svgHash(bytes), note: 'SVG 返修提交', at: new Date().toISOString() });
     report.repairs += 1;
     await writeReviewReport(reportPath, report);
   }
@@ -93,10 +99,30 @@ async function publishReview(job: JobRecord, jobDir: string, input: SubmitInput,
   if (!input.feedback?.trim()) throw new Error('review 需要 --feedback');
   const candidate = job.inputs.candidate ?? job.inputs.source;
   if (!candidate) throw new Error('review 缺少候选');
-  await assertObserved(jobDir, candidate, ['svg', 'blend', 'edge', 'view']);
-  const bytes = await readFile(candidate);
-  if (job.candidateHash && !matchesHash(bytes, job.candidateHash) && !bytesHash(bytes).startsWith(job.candidateHash)) {
+  const report = await readReviewReport(reportFile, job.groupId);
+  const phase = reviewPhase(report, job.reviewRounds ?? 3);
+  if (phase === 'repair' || phase === 'blocked' || phase === 'exhausted') {
+    throw new Error(`review ${phase}：返修未完成、故障未恢复或审核预算耗尽；不能启动下一轮`);
+  }
+  if (input.verdict !== 'blocked') await assertObserved(jobDir, candidate, ['svg', 'blend', 'edge', 'view']);
+  const bytes = await readFile(candidate).catch(error => { if (input.verdict !== 'blocked') throw error; return undefined; });
+  if (input.verdict !== 'blocked' && bytes && job.candidateHash && !matchesHash(bytes, job.candidateHash) && !bytesHash(bytes).startsWith(job.candidateHash)) {
     throw new Error('候选 SVG 已变化，不能按旧候选提交结论');
+  }
+  const candidateHash = bytes ? (/\.svg$/i.test(candidate) ? svgHash(bytes) : bytesHash(bytes)) : job.candidateHash ?? 'unavailable';
+  const referenceBytes = job.inputs.reference ? await readFile(job.inputs.reference).catch(() => undefined) : undefined;
+  const referenceHash = referenceBytes ? bytesHash(referenceBytes) : undefined;
+  if (input.verdict !== 'blocked' && job.referenceHash && job.referenceHash !== referenceHash) throw new Error('参考图已变化，请重新领取审核任务');
+  if (phase === 'done') {
+    const nextPhase = reviewPhase(report, job.reviewRounds ?? 3, { candidateHash, referenceHash,
+      requireChecks: job.kind !== 'raster-review',
+      ...(job.kind === 'raster-review' ? { deliverablesHash: await rasterDeliverablesHash(job.outputDir!, job.required ?? []) } : {}) });
+    if (nextPhase !== 'review') throw new Error(`审核 ${nextPhase}，不能重复提交或绕过审核预算`);
+  }
+  if (input.verdict !== 'blocked' && job.deliverablesHash && job.deliverablesHash !== await rasterDeliverablesHash(job.outputDir!, job.required ?? [])) throw new Error('KRA 或其他交付在领取审核后已变化，请重新 next');
+  if (input.reviewReport) {
+    validateVisionReport(input.reviewReport, { jobId: job.id, candidateHash, referenceHash: referenceHash!, canvas: job.canvas });
+    if (input.reviewReport.verdict !== input.verdict) throw new Error('审核建议与提交结论不一致');
   }
   const checks = (job.kind === 'review' || job.kind === 'completion-review') && input.verdict === 'pass'
     ? await assertReviewEvidence(jobDir, candidate, job.inputs.reference!, job.canvas,
@@ -105,12 +131,20 @@ async function publishReview(job: JobRecord, jobDir: string, input: SubmitInput,
   if ((job.kind === 'review' || job.kind === 'completion-review') && input.verdict === 'pass') {
     await validateGroupSvg(candidate, job.groupId, job.canvas, job.inputs.parentSvg);
   }
-  const report = await readReviewReport(reportFile, job.groupId);
-  report.reviews.push({
-    verdict: input.verdict, feedback: input.feedback.trim(),
-    ...(checks ? { checks, referenceHash: checks.referenceHash } : {}),
-    candidateHash: /\.svg$/i.test(candidate) ? svgHash(bytes) : bytesHash(bytes), at: new Date().toISOString(),
-  });
+  const attemptId = input.reviewReport?.attemptId ?? randomUUID();
+  const snapshot = `${reportFile}.history/${attemptId}`;
+  if (bytes) await writeAtomic(join(snapshot, /\.svg$/i.test(candidate) ? 'candidate.svg' : 'candidate.png'), bytes);
+  if (referenceBytes) await writeAtomic(join(snapshot, 'reference.png'), referenceBytes);
+  const entry = {
+    verdict: input.verdict, feedback: input.feedback.trim() + (input.reviewReport?.findings.length ? '\n缺陷清单：\n' + JSON.stringify(input.reviewReport.findings, null, 2) : ''), referenceHash,
+    ...(checks ? { checks } : {}), attemptId, snapshot,
+    ...(input.reviewReport ? { reviewerModel: input.reviewReport.reviewerModel, report: input.reviewReport } : {}),
+    ...(job.kind === 'raster-review' && input.verdict !== 'blocked'
+      ? { deliverablesHash: await rasterDeliverablesHash(job.outputDir!, job.required ?? []) } : {}),
+    candidateHash, at: new Date().toISOString(),
+  };
+  await writeAtomic(join(snapshot, 'review.json'), JSON.stringify(entry, null, 2) + '\n');
+  report.reviews.push(entry);
   await writeReviewReport(reportFile, report);
   return save(jobDir, { job: jobDir, verdict: input.verdict, published: reportFile });
 }
@@ -263,12 +297,14 @@ async function submitCompletion(job: JobRecord, jobDir: string, input: SubmitInp
   const report = await readReviewReport(reportPath, job.groupId);
   const revises = report.reviews.filter(entry => entry.verdict === 'revise').length;
   const last = report.reviews.at(-1);
+  const published = partPath(job.run, job.groupId);
+  await writeAtomic(published, draft);
   if (last?.verdict === 'revise' && !matchesHash(draft, last.candidateHash) && report.repairs < revises) {
+    report.repairHistory ??= [];
+    report.repairHistory.push({ beforeHash: last.candidateHash, afterHash: svgHash(draft), note: input.note.trim(), at: new Date().toISOString() });
     report.repairs++;
     await writeReviewReport(reportPath, report);
   }
-  const published = partPath(job.run, job.groupId);
-  await writeAtomic(published, draft);
   const check = {
     passed: true, additions, note: input.note.trim(), at: new Date().toISOString(),
   };
@@ -386,11 +422,8 @@ async function submitRasterReview(job: JobRecord, jobDir: string, input: SubmitI
   const reportFile = join(job.run, job.groupId, 'review.json');
   const result = await publishReview(job, jobDir, input, reportFile);
   const report = await readReviewReport(reportFile, job.groupId);
-  const revises = report.reviews.filter(entry => entry.verdict === 'revise').length;
-  const rounds = job.reviewRounds ?? 2;
-  const done = input.verdict === 'pass' || input.verdict === 'blocked'
-    || (report.reviews.length >= rounds && report.repairs >= revises);
-  if (done) await finishRaster(job, input.verdict === 'pass' ? 'pass' : 'repaired', report.reviews.length);
+  if (input.verdict === 'pass') await finishRaster(job, 'pass', qualityRounds(report));
+  else await rm(join(job.run, job.groupId, '.completed'), { force: true });
   return result;
 }
 
@@ -402,12 +435,15 @@ async function submitRaster(job: JobRecord, jobDir: string, input: SubmitInput):
     const reportFile = join(directory, 'review.json');
     const report = await readReviewReport(reportFile, job.groupId);
     const revises = report.reviews.filter(entry => entry.verdict === 'revise').length;
+    if (reviewPhase(report, job.reviewRounds ?? 3) !== 'repair') throw new Error('当前不处于可返修阶段');
+    const last = report.reviews.at(-1)!;
+    const changed = await rasterDeliverablesHash(directory, job.required ?? []);
+    if (last.deliverablesHash === changed) throw new Error('返修交付未变化');
     if (report.repairs < revises) {
+      report.repairHistory ??= [];
+      report.repairHistory.push({ beforeHash: last.deliverablesHash ?? last.candidateHash, afterHash: changed, note: input.note.trim(), at: new Date().toISOString() });
       report.repairs += 1;
       await writeReviewReport(reportFile, report);
-    }
-    if (report.reviews.length >= (job.reviewRounds ?? 2) && report.repairs >= revises) {
-      await finishRaster(job, 'repaired', report.reviews.length);
     }
     return save(jobDir, { job: jobDir, repairs: report.repairs });
   }

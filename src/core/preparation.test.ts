@@ -171,7 +171,7 @@ test('任务包：带空格和单引号的真实命令可从其他目录执行�
     assert.equal(dryRuns.length, 2);
     assert.equal(generations.length, 2);
     const simplifyPreview = JSON.parse((await execute(dryRuns[0])).stdout);
-    assert.equal(simplifyPreview.model, 'gemini-nano-banana-2.1');
+    assert.equal(simplifyPreview.model, 'gpt-image-2.5-sunburst');
     assert.equal(requests.length, 0);
     await execute(generations[0]);
     const bodyPreview = JSON.parse((await execute(dryRuns[1])).stdout);

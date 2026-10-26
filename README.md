@@ -85,12 +85,12 @@ cp -a /tmp/astra/.agents/skills/live2d-maker vendor/live2d-maker
 
 ```bash
 L2D_IMAGE_BACKEND=apiyi           # apiyi | api | codex
-L2D_IMAGE_MODEL=gemini-nano-banana-2.1
+L2D_IMAGE_MODEL=gpt-image-2.5-sunburst
 APIYI_API_KEY=...                 # apiyi 后端必填，只留在服务端 .env
 L2D_UPSCALE_BACKEND=local         # local | codex
 ```
 
-`l2d imagegen --task standardize|body_reference|fast_comparison` 分别对应 `gemini-nano-banana-2.1`、`gpt-image-2.5-sunburst`、`gpt-image-2.5-flare`，也可用 `--model` 指定。API易只做图生图，至少要一张 `--ref`。
+`l2d imagegen --task standardize|body_reference|fast_comparison` 分别对应 `gpt-image-2.5-sunburst`、`gpt-image-2.5-sunburst`、`gpt-image-2.5-flare`，也可用 `--model` 指定。API易只做图生图，至少要一张 `--ref`。
 
 简化和素体都使用 `--background transparent`，交付真实 Alpha 的 PNG（RGBA）。GPT 接口携带 `background=transparent`、`output_format=png`，返回不透明或全透明图片时拒绝交付；校验在缩放补边前完成。Nano Banana 的同名选项由工具处理，不透传到 Gemini API：按主体颜色选绿/蓝/红背景，原生 Alpha 优先，否则仅以第一张生图为参考换成黑/白背景，再用受约束最小二乘恢复 Alpha 与边缘 RGB。禁止单背景色键去背或 rematte。
 
@@ -113,3 +113,9 @@ node src/cli/main.ts validate --run ../.run/my-character/part-layering   # 136 �
 - 图片后端测试：local 放大尺寸正确；api 分别命中 `generations` 与 `edits`（校验 multipart 的 `image[]`）；codex 不可用与 local 不支持生图都给出明确提示。
 - 管线测试数据写入 `.run/`，图片测试使用系统临时目录，结束即清理，不触碰工作区已有产物。
 
+
+## 独立视觉审核
+
+默认由现有具备识图能力的 Agent 在独立审核会话中查看整图、局部和参考，自动填写证据后 submit；用户当前使用 DeepSeek Flash，无需额外配置审核模型。GPT Image 2.5 Sunburst 负责生图/改图。默认三审两修，只有 pass 放行，blocked/exhausted 停止下游；栅格还需实际 Krita 审查。
+
+如显式选择独立 API 审核，可配置 `APIYI_API_KEY` 与 `L2D_REVIEW_MODEL` 后调用 `node src/cli/main.ts review run --job <review目录>`。该接口是可选入口，未配置它不影响默认 Agent 审核。恢复、人工新周期及验收状态见 [审核工作流](docs/REVIEW-WORKFLOW.md)。

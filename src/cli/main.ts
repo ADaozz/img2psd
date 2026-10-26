@@ -17,6 +17,8 @@ import { materialize, readJob } from '../core/jobs/materialize.ts';
 import { appendObservation } from '../core/jobs/observations.ts';
 import { submit as submitJob } from '../core/jobs/submit.ts';
 import { imageGenerate, upscale as upscaleImage, canonicalModel, previewApiyi, providerForModel, resolveBackendName, taskModel } from '../agents/image.ts';
+import { runReview } from '../core/jobs/review-runner.ts';
+import { reviewControl } from '../core/jobs/review-control.ts';
 import { loadRasterConfig, upstreamDirectory } from '../core/raster/config.ts';
 
 const stages = ['outline', 'review', 'reduction', 'completion', 'completionCheck'] as const;
@@ -247,8 +249,8 @@ async function next(args: string[]) {
   } });
   if (!values.run) throw new Error('next 需要 --run <part-layering 目录>');
   const run = resolve(values.run);
-  const maxRounds = values['review-rounds'] === undefined ? 2 : Number(values['review-rounds']);
-  if (!Number.isSafeInteger(maxRounds) || maxRounds < 1 || maxRounds > 4) throw new Error('--review-rounds 须为 1..4');
+  const maxRounds = values['review-rounds'] === undefined ? 3 : Number(values['review-rounds']);
+  if (!Number.isSafeInteger(maxRounds) || maxRounds < 1 || maxRounds > 3) throw new Error('--review-rounds 须为 1..3');
   const plan = await planJobs(run, { maxRounds, expand: values.expand === true });
   const jobs = [];
   for (const item of plan.items) {
@@ -296,6 +298,18 @@ async function submitCmd(args: string[]) {
   else if (result.changed !== undefined) console.log(`已处理：${result.job}（累计变更组 ${result.changed}）`);
   else if (result.added) console.log(`已登记子节点：${result.added.join(', ')}`);
   else console.log(`已提交：${result.job}${result.published ? ` → ${result.published}` : ''}${result.verdict ? `（${result.verdict}）` : ''}`);
+  return 0;
+}
+
+async function reviewCmd(args: string[]) {
+  const [action, ...rest] = args;
+  if (!['run', 'reopen', 'retry', 'history'].includes(action)) throw new Error('review 需要 run|reopen|retry|history');
+  const { values } = parseArgs({ args: rest, options: { job: { type: 'string' }, reason: { type: 'string' } } });
+  if (!values.job) throw new Error('review 需要 --job');
+  const directory = resolve(values.job);
+  const result = action === 'run' ? await runReview(directory)
+    : await reviewControl(directory, action as 'reopen' | 'retry' | 'history', values.reason);
+  console.log(JSON.stringify(result, null, 2));
   return 0;
 }
 
@@ -375,7 +389,7 @@ async function upscaleCmd(args: string[]) {
 
 const usage = `l2d — live2d-portable 唯一 agent 接口（核心命令不依赖 Codex）
 
-  l2d next     --run <part-layering> [--review-rounds 1..4] [--expand] [--json]
+  l2d next     --run <part-layering> [--review-rounds 1..3] [--expand] [--json]
   l2d submit   --job <job 目录> [--svg <草稿>] [--verdict pass|revise|blocked --feedback ...]
                [--paths '<JSON 数组>' | --paths @paths.json --note "补全依据"]
                [--group <组ID> --svg <文件> | --note "去重依据"]
@@ -389,6 +403,7 @@ const usage = `l2d — live2d-portable 唯一 agent 接口（核心命令不依�
   l2d validate --run <part-layering> [--stage outline|reduction|completion|all] [--json]
   l2d check    --svg <file> --group <id> [--canvas 1024x1536] [--parent <svg>] [--allow-empty] [--json]
   l2d merge    --run <part-layering> --out <preview.svg> [--depth N] [--partial]
+  l2d review   run|history|reopen|retry --job <job> [--reason <恢复或人工授权原因>]
   l2d imagegen --prompt <文本> | --prompt-file <f> --out <png> [--ref <png> ...] [--size WxH]
                [--model gemini-nano-banana-2.1|gpt-image-2.5-sunburst|gpt-image-2.5-flare]
                [--task standardize|body_reference|fast_comparison]
@@ -414,6 +429,7 @@ async function main(argv: string[]): Promise<number> {
     case 'check': return check(rest);
     case 'preview': return preview(rest);
     case 'merge': return merge(rest);
+    case 'review': return reviewCmd(rest);
     case 'imagegen': return imagegen(rest);
     case 'upscale': return upscaleCmd(rest);
     case undefined:

@@ -67,7 +67,7 @@ export function selectBackend(operation: Operation, env: NodeJS.ProcessEnv = pro
     return apiyiBackend({
       apiKey,
       baseUrl: env.APIYI_BASE_URL?.trim() || 'https://api.apiyi.com',
-      model: modelFor('apiyi', chosen, env) || 'gemini-nano-banana-2.1',
+      model: modelFor('apiyi', chosen, env) || 'gpt-image-2.5-sunburst',
       ...(Number.isFinite(timeout) && timeout > 0 ? { timeoutMs: timeout } : {}),
     });
   }

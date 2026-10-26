@@ -2,9 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { walkGroups, type GroupNode } from '../facts/groups.ts';
-import { readReviewReport } from '../facts/review.ts';
+import { readReviewReport, reviewPhase } from '../facts/review.ts';
 import { bytesHash, matchesHash } from '../facts/hash.ts';
 import { loadRasterConfig, upstreamDirectory, type RasterStep } from '../raster/config.ts';
+import { rasterDeliverablesHash } from '../raster/hash.ts';
 import type { Canvas } from '../svg/validate.ts';
 
 // 程序只根据已落盘的事实决定「下一件可以领的 job」。
@@ -75,7 +76,7 @@ async function readGroups(run: string): Promise<{ subject?: string; groups: Grou
   return { subject: raw.subject, groups: raw.groups };
 }
 
-type Phase = 'draw' | 'review' | 'repair' | 'done' | 'blocked';
+type Phase = 'draw' | 'review' | 'repair' | 'done' | 'blocked' | 'exhausted';
 
 export async function outlinePhase(run: string, id: string, maxRounds: number): Promise<Phase> {
   return reviewedPhase(run, id, maxRounds, outlinePath(run, id), reviewPath(run, id));
@@ -84,17 +85,13 @@ export async function outlinePhase(run: string, id: string, maxRounds: number): 
 async function reviewedPhase(run: string, id: string, maxRounds: number, candidatePath: string, reportPath: string): Promise<Phase> {
   if (!await exists(candidatePath)) return 'draw';
   const report = await readReviewReport(reportPath, id);
-  if (!report.reviews.length) return 'review';
-  const revises = report.reviews.filter(entry => entry.verdict === 'revise').length;
-  const last = report.reviews.at(-1)!;
-  if (last.verdict === 'pass') {
+  const phase = reviewPhase(report, maxRounds);
+  if (phase === 'done') {
+    const last = report.reviews.at(-1)!;
     const [candidate, reference] = await Promise.all([readFile(candidatePath), readFile(join(run, 'references/base-subject.png'))]);
-    return last.checks && matchesHash(candidate, last.candidateHash) && last.referenceHash === bytesHash(reference) ? 'done' : 'review';
+    return reviewPhase(report, maxRounds, { candidateHash: matchesHash(candidate, last.candidateHash) ? last.candidateHash : bytesHash(candidate), referenceHash: bytesHash(reference), requireChecks: true });
   }
-  if (last.verdict === 'blocked') return 'blocked';
-  if (last.verdict === 'revise' && report.repairs < revises) return 'repair';
-  if (report.reviews.length >= maxRounds) return 'blocked';
-  return 'review';
+  return phase;
 }
 
 async function planParts(run: string, options: { maxRounds: number; expand: boolean }): Promise<Plan> {
@@ -141,8 +138,8 @@ async function planParts(run: string, options: { maxRounds: number; expand: bool
       for (const item of phases) {
         if (item.phase === 'done') continue;
         const id = item.entry.group.id;
-        if (item.phase === 'blocked') {
-          blocked.push({ id, message: 'review 被阻塞或审查轮数已用完但仍无通过结论；停止下游，处理反馈后重新审查' });
+        if (item.phase === 'blocked' || item.phase === 'exhausted') {
+          blocked.push({ id, message: `review ${item.phase}：审查未通过；停止下游，处理反馈后重新审查` });
           continue;
         }
         const feedback = item.phase === 'repair'
@@ -201,9 +198,9 @@ async function planParts(run: string, options: { maxRounds: number; expand: bool
       const reportPath = join(run, 'stages/completion-review', `${id}.review.json`);
       const phase = await reviewedPhase(run, id, options.maxRounds, partPath(run, id), reportPath);
       if (phase === 'done') continue;
-      if (phase === 'blocked') {
+      if (phase === 'blocked' || phase === 'exhausted') {
         completionBlocked = true;
-        blocked.push({ id, message: '补全 review 未通过或轮数已耗尽，不能拆分子层或发布最终叠放' });
+        blocked.push({ id, message: `补全 review ${phase}：未通过，不能拆分子层或发布最终叠放` });
         continue;
       }
       const reduced = reductionPath(run, id);
@@ -249,12 +246,17 @@ async function planParts(run: string, options: { maxRounds: number; expand: bool
 async function rasterPhase(run: string, step: RasterStep): Promise<Phase> {
   if (!step.review || !await exists(join(run, step.id, '.drawn'))) return 'draw';
   const report = await readReviewReport(join(run, step.id, 'review.json'), step.id);
-  if (!report.reviews.length) return 'review';
-  const revises = report.reviews.filter(entry => entry.verdict === 'revise').length;
-  const last = report.reviews.at(-1)!;
-  if (last.verdict === 'revise' && report.repairs < revises) return 'repair';
-  if (last.verdict !== 'pass' && last.verdict !== 'blocked' && report.reviews.length < (step.review.maxRounds ?? 2)) return 'review';
-  return 'draw';
+  const phase = reviewPhase(report, step.review.maxRounds ?? 3);
+  if (phase === 'done') {
+    const png = step.required.find(name => name.toLowerCase().endsWith('.png'));
+    if (!png) return 'blocked';
+    const [candidate, reference, files] = await Promise.all([
+      readFile(join(run, step.id, png)), readFile(join(upstreamDirectory(run, await loadRasterConfig(run)), 'references/base-subject.png')),
+      rasterDeliverablesHash(join(run, step.id), step.required),
+    ]);
+    return reviewPhase(report, step.review.maxRounds ?? 3, { candidateHash: bytesHash(candidate), referenceHash: bytesHash(reference), deliverablesHash: files });
+  }
+  return phase;
 }
 
 async function planRaster(run: string): Promise<Plan> {
@@ -273,7 +275,7 @@ async function planRaster(run: string): Promise<Plan> {
   const blocked: { id: string; message: string }[] = [];
   const completed: string[] = [];
   for (const step of config.steps) {
-    if (await exists(join(run, step.id, '.completed'))) { completed.push(step.id); continue; }
+    if (await exists(join(run, step.id, '.completed')) && (!step.review || await rasterPhase(run, step) === 'done')) { completed.push(step.id); continue; }
     const missing = [];
     for (const input of step.inputs ?? []) if (!await exists(join(run, input))) missing.push(input);
     if (missing.length) {
@@ -281,6 +283,10 @@ async function planRaster(run: string): Promise<Plan> {
       break;
     }
     const phase = await rasterPhase(run, step);
+    if (phase === 'blocked' || phase === 'exhausted') {
+      blocked.push({ id: step.id, message: `raster review ${phase}：未通过，停止下游` });
+      break;
+    }
     const png = step.required.find(name => name.toLowerCase().endsWith('.png'));
     const feedback = phase === 'repair'
       ? (await readReviewReport(join(run, step.id, 'review.json'), step.id)).reviews.filter(entry => entry.verdict === 'revise').at(-1)?.feedback
@@ -296,7 +302,7 @@ async function planRaster(run: string): Promise<Plan> {
       outputDir: join(run, step.id),
       expectsReview: !!step.review,
       reference,
-      ...(step.review ? { reviewRounds: step.review.maxRounds ?? 2 } : {}),
+      ...(step.review ? { reviewRounds: step.review.maxRounds ?? 3 } : {}),
       ...(png ? { deliverable: join(run, step.id, png) } : { deliverable: reference }),
       ...(feedback ? { feedback } : {}),
     });

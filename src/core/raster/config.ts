@@ -32,8 +32,8 @@ export async function loadRasterConfig(run: string): Promise<RasterConfig> {
       if (!step.review || typeof step.review !== 'object' || typeof step.review.prompt !== 'string' || !step.review.prompt.trim()) {
         throw new Error(`${step.id} 的 review 配置无效`);
       }
-      const rounds = step.review.maxRounds ?? 2;
-      if (!Number.isSafeInteger(rounds) || rounds < 1 || rounds > 4) throw new Error(`${step.id} 的 review.maxRounds 须为 1..4`);
+      const rounds = step.review.maxRounds ?? 3;
+      if (!Number.isSafeInteger(rounds) || rounds < 1 || rounds > 3) throw new Error(`${step.id} 的 review.maxRounds 须为 1..3`);
       step.review = { ...step.review, maxRounds: rounds };
     }
     return step;
