@@ -134,11 +134,13 @@ node src/cli/main.ts upscale  --in <png> --out <png> [--scale 2..8]     # 默认
 node src/cli/main.ts imagegen --prompt "..." --out <png> [--ref <png> ...]
 ```
 
-后端由环境变量选择：`L2D_IMAGE_BACKEND=api|qwen|codex`（生图）、`L2D_UPSCALE_BACKEND=local|codex`（放大）。
+后端由环境变量选择：`L2D_IMAGE_BACKEND=api|qwen|apiyi|codex`（生图）、`L2D_UPSCALE_BACKEND=local|codex`（放大）。同一次 `imagegen` 也可以用 `--model` 在 qwen-image-3 和 API易之间切换。
 
 - `api`：`L2D_IMAGE_BASE_URL`、`L2D_IMAGE_API_KEY`、可选 `L2D_IMAGE_MODEL`
-- `qwen`：`DASHSCOPE_API_KEY`（必填）、`L2D_IMAGE_BASE_URL`（默认千问北京端点）、`L2D_IMAGE_MODEL`（默认 `qwen-image-3.0-pro`）
+- `qwen`：`DASHSCOPE_API_KEY`（必填）、`L2D_IMAGE_BASE_URL`（默认千问北京端点）、`L2D_IMAGE_MODEL`（默认 `qwen-image-3.0-pro`，别名 `qwenimage3`）
+- `apiyi`：`APIYI_API_KEY`（必填，不可下发到浏览器）、可选 `APIYI_BASE_URL`（默认 `https://api.apiyi.com`）、`APIYI_TIMEOUT_MS`（默认 300000）
 - 这些变量可写在项目根目录 `.env`（自动加载，已 gitignore）；命令行同名变量优先
+- API易模型与任务：`--task standardize` → `gemini-nano-banana-2.1`；`--task body_reference` → `gpt-image-2.5-sunburst`；`--task fast_comparison` → `gpt-image-2.5-flare`。这三条都是图生图，必须有 `--ref`。默认严格保持原图画布；比例接近但像素不同、且允许补边时加 `--loose`
 - 有白底但要求透明时加 `--matte`：`l2d imagegen ... --matte`，或单独 `l2d matte --in a.png --out b.png`
 
 ## 目录

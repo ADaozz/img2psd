@@ -3,15 +3,33 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export type ImageReference = { path: string; description?: string };
+export type ImageSizeTier = '1K' | '2K' | '4K';
+export type GptImageQuality = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type GptImageBackground = 'auto' | 'opaque' | 'transparent';
 export type ImageGenerateJob = {
   prompt: string;
   references?: ImageReference[];
   output: string;
   size?: string;
   model?: string;
+  // 缺省 true：输出画布必须与目标一致，不允许缩放补边。
+  // false：只做等比例缩放加留边，比例差太多则失败。
+  strict?: boolean;
+  imageSize?: ImageSizeTier;
+  quality?: GptImageQuality;
+  background?: GptImageBackground;
 };
 export type UpscaleJob = { input: string; output: string; scale?: number };
-export type ImageResult = { savedPath: string; bytes: number; backend: string };
+export type ImageResult = {
+  savedPath: string;
+  bytes: number;
+  backend: string;
+  model?: string;
+  requestId?: string;
+  canvasMatched?: boolean;
+  ratioMatched?: boolean;
+  aligned?: boolean;
+};
 export type Operation = 'imagegen' | 'upscale';
 
 export type ImageBackend = {

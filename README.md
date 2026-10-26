@@ -53,7 +53,7 @@ live2d-portable/
 | **整层去重 job** | ✅ | 按层派发；单组层自动复制；未提交组逐字节复制；批次记录 `layers/<depth>.json` |
 | **直属拆分 job（`--expand`）** | ✅ | 只收 `name/kind/note`，程序生成 ID、拒绝重复与单 part 包装、原子写入组树 |
 | **遮挡层级规划 job（`occlusion.json` v3）** | ✅ | 全树完成后自动合并 `preview.svg`，程序生成候选叠放预览，逐件检查后才发布 |
-| **`l2d imagegen / upscale`（可插拔后端）** | ✅ | `local`（Lanczos 放大）、`api`（Images API）、`qwen`（千问多模态，多图入参）、`codex`（CLI）；只有 `codex.ts` 调用 Codex |
+| **`l2d imagegen / upscale`（可插拔后端）** | ✅ | `local`（Lanczos 放大）、`api`（Images API）、`qwen`（千问多模态，多图入参）、`apiyi`（API易图片编辑，与 qwen-image-3 按模型分流）、`codex`（CLI）；只有 `codex.ts` 调用 Codex |
 | **`l2d matte`（确定性去背）** | ✅ | 四边灌水去连通纯色背景，保留内部同色区域（白色服装不会被误删），1–2px 软边 |
 | **raster / clothing-raster（Krita 位图）** | ✅ | `raster.json` 驱动步骤；绘制与 review/返修是独立 job；交付校验后写 `.drawn` / `.completed` |
 | **初始分组 job** | ✅ | 组树为空时派发；只收 `name/note`，程序生成 id 并写 `groups.json` |
@@ -66,7 +66,7 @@ live2d-portable/
 - **遮挡层级只支持单深度 `level`**：v3 的 `levels: [{level, region}]` 多深度区域还没实现。
 - **`matte` 只适合纯色背景**：渐变、场景背景需要换方案（分割/抠图模型）。
 - **raster 未在本机跑真实 Krita 端到端**：流程与交付校验有测试覆盖，但真正的分层/补全质量取决于执行该步骤的 agent 与 Krita 环境。
-- **图片生成依赖外部服务**：`qwen` 需要 `DASHSCOPE_API_KEY`，`api` 需要兼容 Images API 的网关，`codex` 需要 Codex CLI；只有放大默认走本地。
+- **图片生成依赖外部服务**：`qwen` 需要 `DASHSCOPE_API_KEY`，`apiyi` 需要 `APIYI_API_KEY`，`api` 需要兼容 Images API 的网关，`codex` 需要 Codex CLI；只有放大默认走本地。
 
 ## 上游快照
 
@@ -84,12 +84,15 @@ cp -a /tmp/astra/.agents/skills/live2d-maker vendor/live2d-maker
 项目根目录的 `.env` 会在 CLI 启动时自动加载（`src/config/env.ts`）：命令行已有的环境变量优先，`L2D_NO_DOTENV=1` 可关闭。`.env` 已加入 `.gitignore`，权限建议 600；模板见 `.env.example`。
 
 ```bash
-L2D_IMAGE_BACKEND=qwen            # qwen | api | codex
+L2D_IMAGE_BACKEND=qwen            # qwen | apiyi | api | codex
 DASHSCOPE_API_KEY=...             # qwen 后端必填
 L2D_IMAGE_BASE_URL=...            # qwen 默认北京端点
 L2D_IMAGE_MODEL=qwen-image-3.0-pro
+APIYI_API_KEY=...                 # apiyi 后端必填，只留在服务端 .env
 L2D_UPSCALE_BACKEND=local         # local | codex
 ```
+
+`l2d imagegen` 同时接受千问和 API易：`--model qwenimage3`（即 `qwen-image-3.0-pro`），或 `--task standardize|body_reference|fast_comparison`（分别对应 `gemini-nano-banana-2.1`、`gpt-image-2.5-sunburst`、`gpt-image-2.5-flare`）。API易只做图生图，至少要一张 `--ref`。
 
 生图/下载对网络层失败会重试 3 次（代理环境下的长请求偶发被重置）。
 
