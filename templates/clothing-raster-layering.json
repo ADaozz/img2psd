@@ -1,0 +1,33 @@
+{
+  "pipeline": "clothing-raster-layering",
+  "upstream": "../clothing-part-layering",
+  "steps": [
+    {
+      "id": "step01",
+      "title": "衣服分件、补全与 Krita 拼装",
+      "prompt": "01-衣服分层与补全.md",
+      "required": [
+        "clothing-depth.kra",
+        "report.md"
+      ]
+    },
+    {
+      "id": "step02",
+      "title": "衣服边缘与衔接修画",
+      "prompt": "02-边缘柔化.md",
+      "inputs": [
+        "step01/clothing-depth.kra",
+        "step01/report.md"
+      ],
+      "required": [
+        "clothing-soft-edges.kra",
+        "report.md"
+      ],
+      "review": {
+        "prompt": "02-review.md",
+        "repairPrompt": "02-repair.md",
+        "maxRounds": 2
+      }
+    }
+  ]
+}

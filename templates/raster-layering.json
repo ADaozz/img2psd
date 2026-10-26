@@ -1,0 +1,48 @@
+{
+  "pipeline": "raster-layering",
+  "upstream": "../part-layering",
+  "steps": [
+    {
+      "id": "step01",
+      "title": "分层、补全与 Krita 交付",
+      "prompt": "01-分层与补全.md",
+      "required": [
+        "character-depth.kra",
+        "report.md"
+      ]
+    },
+    {
+      "id": "step02",
+      "title": "边缘柔化与去锯齿",
+      "prompt": "02-边缘柔化与去锯齿.md",
+      "inputs": [
+        "step01/character-depth.kra",
+        "step01/report.md"
+      ],
+      "required": [
+        "character-soft-edges.kra",
+        "character-soft-edges.png",
+        "report.md"
+      ],
+      "review": {
+        "prompt": "02-review.md",
+        "repairPrompt": "02-repair.md",
+        "maxRounds": 2
+      }
+    },
+    {
+      "id": "step03",
+      "title": "去除连体服与补全身体底层",
+      "prompt": "03-去除连体服.md",
+      "inputs": [
+        "step02/character-soft-edges.kra",
+        "step02/report.md"
+      ],
+      "required": [
+        "character-dressup-base.kra",
+        "character-dressup-base.png",
+        "report.md"
+      ]
+    }
+  ]
+}

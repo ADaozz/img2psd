@@ -1,0 +1,20 @@
+{
+  "name": "live2d-portable",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "live2d-maker 的可移植复刻：仅生图/放大依赖 Codex，其余步骤任何 agent 可执行",
+  "engines": { "node": ">=22.18.0" },
+  "scripts": {
+    "l2d": "node src/cli/main.ts",
+    "check": "tsc",
+    "test": "node --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "sharp": "0.35.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "7.0.2"
+  }
+}
