@@ -5,6 +5,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
 import sharp from 'sharp';
 
 const run = promisify(execFile);
@@ -134,6 +136,63 @@ test('初始分组：组树为空时派发，提交后写 groups.json 并进入�
     const after = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
     assert.deepEqual(after.jobs.map((job: { kind: string }) => job.kind), ['outline', 'outline']);
   } finally {
+    await rm(taskRoot, { recursive: true, force: true });
+  }
+});
+
+
+test('任务包：带空格和单引号的真实命令可从其他目录执行，保持续跑参数', async () => {
+  const { taskRoot, runDir } = await makeTask("test-instructions space'quote");
+  const generated = await transparentSubject();
+  const requests: { url?: string; body: string }[] = [];
+  const server = createServer((request, response) => {
+    let body = '';
+    request.on('data', chunk => { body += chunk; });
+    request.on('end', () => {
+      requests.push({ url: request.url, body });
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify(request.url?.includes(':generateContent')
+        ? { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: generated.toString('base64') } }] } }] }
+        : { data: [{ b64_json: generated.toString('base64') }] }));
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const env = { ...process.env, L2D_NO_DOTENV: '1', APIYI_API_KEY: 'test-instruction-key',
+    APIYI_BASE_URL: `http://127.0.0.1:${address.port}` };
+  const execute = (command: string) => run('/bin/sh', ['-c', command], { cwd: tmpdir(), env });
+  try {
+    const first = JSON.parse((await l2d('next', '--run', runDir, '--review-rounds', '3', '--expand', '--json')).stdout);
+    const text = await readFile(first.jobs[0].instructions, 'utf8');
+    const commandLines = text.split('\n').filter(line => line.startsWith('node '));
+    const dryRuns = commandLines.filter(line => line.includes(' imagegen ') && line.includes('--dry-run'));
+    const generations = commandLines.filter(line => line.includes(' imagegen ') && !line.includes('--dry-run'));
+    assert.equal(dryRuns.length, 2);
+    assert.equal(generations.length, 2);
+    const simplifyPreview = JSON.parse((await execute(dryRuns[0])).stdout);
+    assert.equal(simplifyPreview.model, 'gemini-nano-banana-2.1');
+    assert.equal(requests.length, 0);
+    await execute(generations[0]);
+    const bodyPreview = JSON.parse((await execute(dryRuns[1])).stdout);
+    assert.equal(bodyPreview.model, 'gpt-image-2.5-sunburst');
+    assert.equal(requests.length, 1);
+    await execute(generations[1]);
+    assert.equal(requests.length, 2);
+    assert.match(requests[1].body, /name="background"\r\n\r\ntransparent/);
+    await execute(commandLines.find(line => line.includes(' submit '))!);
+    const continuation = commandLines.find(line => line.includes(' next '))!;
+    assert.match(continuation, /--review-rounds 3 --expand --json$/);
+    const next = JSON.parse((await execute(continuation)).stdout);
+    assert.equal(next.jobs[0].kind, 'outline');
+    const outline = await readFile(next.jobs[0].instructions, 'utf8');
+    assert.match(outline, /--mode svg/);
+    assert.match(outline, /--mode blend/);
+    assert.match(outline, /--mode edge/);
+    assert.match(outline, /当前节点：face/);
+    assert.doesNotMatch(outline, /update_group_note|image_generation/);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     await rm(taskRoot, { recursive: true, force: true });
   }
 });

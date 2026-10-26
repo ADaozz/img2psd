@@ -49,6 +49,13 @@ test('栅格管线：按步骤推进，交付校验后写完成标记', async ()
     assert.equal(plan.jobs[0].groupId, 'step01');
     const step01 = plan.jobs[0].dir;
     assert.match(await readFile(join(step01, 'INSTRUCTIONS.md'), 'utf8'), /产出到 .*step01/);
+    const instructions = await readFile(join(step01, 'INSTRUCTIONS.md'), 'utf8');
+    assert.ok(instructions.includes(`上游目录（只读）：${join(taskRoot, 'part-layering')}`));
+    assert.ok(instructions.includes(`完整交付路径：${join(raster, 'step01/character-depth.kra')}`));
+    assert.match(instructions, /Krita.*实际/);
+    assert.match(instructions, /submit --job/);
+    assert.doesNotMatch(instructions, /配套深度工具|Codex 内置的 image_generation/);
+
 
     // 未产出文件 → 拒绝
     await assert.rejects(l2d('submit', '--job', step01, '--note', '完成'), (error: { code?: number }) => error.code === 1);

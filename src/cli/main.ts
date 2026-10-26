@@ -251,7 +251,7 @@ async function next(args: string[]) {
   const plan = await planJobs(run, { maxRounds, expand: values.expand === true });
   const jobs = [];
   for (const item of plan.items) {
-    const job = await materialize(plan, item, maxRounds);
+    const job = await materialize(plan, item, maxRounds, values.expand === true);
     const dir = jobDirectory(run, job.kind, job.groupId);
     jobs.push({ id: job.id, kind: job.kind, reason: job.reason, groupId: job.groupId,
       dir, instructions: join(dir, 'INSTRUCTIONS.md'), draft: job.output.draft, published: job.output.published });
