@@ -241,11 +241,14 @@ async function planRaster(run: string): Promise<Plan> {
     const feedback = phase === 'repair'
       ? (await readReviewReport(join(run, step.id, 'review.json'), step.id)).reviews.filter(entry => entry.verdict === 'revise').at(-1)?.feedback
       : undefined;
+    const prompt = phase === 'review' ? step.review?.prompt
+      : phase === 'repair' ? (step.review?.repairPrompt ?? step.prompt)
+      : step.prompt;
     items.push({
       kind: phase === 'review' ? 'raster-review' : 'raster',
       groupId: step.id,
       reason: phase === 'repair' ? 'raster' : phase === 'review' ? 'review' : 'draw',
-      prompt: step.prompt, stepTitle: step.title, required: step.required,
+      ...(prompt ? { prompt } : {}), stepTitle: step.title, required: step.required,
       outputDir: join(run, step.id),
       expectsReview: !!step.review,
       reference,

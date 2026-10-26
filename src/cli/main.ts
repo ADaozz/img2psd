@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 唯一 agent 接口：任何能跑 shell 的执行者都通过这里读 job、渲染预览、提交产物。
-// 本文件及其依赖不引用 Codex；只有 src/agents/codex-image.ts 才允许。
+// 本文件及其依赖不引用 Codex；只有 src/agents/codex.ts 才允许，且仅作可选的生图/放大后端。
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { loadDotEnv } from '../config/env.ts';

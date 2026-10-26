@@ -17,6 +17,7 @@ const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const promptsRoot = join(repoRoot, 'prompts');
 
 const imageTools = [
+  '正文若写 image_generation 或 Codex 内置生图，在本仓库改为下面的命令，不要启动 Codex：',
   '生图和局部放大由执行者自己调用，程序不代画：',
   '- 千问 qwen-image-3：`l2d imagegen --model qwenimage3`',
   '- API易标准化：`l2d imagegen --task standardize`（gemini-nano-banana-2.1）',
