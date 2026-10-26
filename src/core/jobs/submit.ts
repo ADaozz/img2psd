@@ -10,6 +10,7 @@ import { validateGroupSvg } from '../svg/validate.ts';
 import { assertObserved, clearObservations } from './observations.ts';
 import { outlinePath, partPath, reductionPath, reviewPath } from './plan.ts';
 import { readJob, type JobRecord } from './materialize.ts';
+import { assertReviewEvidence } from './review-policy.ts';
 
 // 执行者提交的是草稿、路径、名字或结论。程序只校验并发布事实，不绘制、不调度下一步。
 
@@ -97,9 +98,17 @@ async function publishReview(job: JobRecord, jobDir: string, input: SubmitInput,
   if (job.candidateHash && !matchesHash(bytes, job.candidateHash) && !bytesHash(bytes).startsWith(job.candidateHash)) {
     throw new Error('候选 SVG 已变化，不能按旧候选提交结论');
   }
+  const checks = (job.kind === 'review' || job.kind === 'completion-review') && input.verdict === 'pass'
+    ? await assertReviewEvidence(jobDir, candidate, job.inputs.reference!, job.canvas,
+      input.checks ? await readJson(input.checks) : undefined)
+    : undefined;
+  if ((job.kind === 'review' || job.kind === 'completion-review') && input.verdict === 'pass') {
+    await validateGroupSvg(candidate, job.groupId, job.canvas, job.inputs.parentSvg);
+  }
   const report = await readReviewReport(reportFile, job.groupId);
   report.reviews.push({
     verdict: input.verdict, feedback: input.feedback.trim(),
+    ...(checks ? { checks, referenceHash: checks.referenceHash } : {}),
     candidateHash: /\.svg$/i.test(candidate) ? svgHash(bytes) : bytesHash(bytes), at: new Date().toISOString(),
   });
   await writeReviewReport(reportFile, report);
@@ -125,6 +134,7 @@ export async function submit(jobDir: string, input: SubmitInput): Promise<Submit
   if (job.kind === 'preparation') return submitPreparation(job, jobDir, input);
   if (job.kind === 'grouping') return submitGrouping(job, jobDir, input);
   if (job.kind === 'outline') return publishOutline(job, jobDir);
+  if (job.kind === 'completion-review') return publishReview(job, jobDir, input, join(job.run, 'stages/completion-review', `${job.groupId}.review.json`));
   if (job.kind === 'review') return publishReview(job, jobDir, input, reviewPath(job.run, job.groupId));
   if (job.kind === 'reduction') return submitReduction(job, jobDir, input);
   if (job.kind === 'completion') return submitCompletion(job, jobDir, input);
@@ -248,6 +258,15 @@ async function submitCompletion(job: JobRecord, jobDir: string, input: SubmitInp
   await assertObserved(jobDir, job.output.draft, ['svg', 'blend'], true);
   const source = await readFile(sourcePath, 'utf8');
   const additions = assertCompletionPreserves(source, draft.toString());
+  await validateGroupSvg(job.output.draft, job.groupId, job.canvas, job.inputs.parentSvg);
+  const reportPath = join(job.run, 'stages/completion-review', `${job.groupId}.review.json`);
+  const report = await readReviewReport(reportPath, job.groupId);
+  const revises = report.reviews.filter(entry => entry.verdict === 'revise').length;
+  const last = report.reviews.at(-1);
+  if (last?.verdict === 'revise' && !matchesHash(draft, last.candidateHash) && report.repairs < revises) {
+    report.repairs++;
+    await writeReviewReport(reportPath, report);
+  }
   const published = partPath(job.run, job.groupId);
   await writeAtomic(published, draft);
   const check = {

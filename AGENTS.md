@@ -2,12 +2,14 @@
 
 先读 `docs/AGENT-PROTOCOL.md`。使用 Node.js >=22.18，在项目目录安装 package.json 的依赖；已有依赖时直接执行。命令入口是 `node src/cli/main.ts`，没有全局 `l2d` 也能工作。
 
+没有视觉通道或环境禁止图片读入上下文时，必须报告 blocked；颜色分类、掩膜、IoU 和格式校验不能代替视觉 review，也不能据此提交 pass。
+
 ## 工作循环
 
 1. 由执行者调用 `node src/cli/main.ts next --run <运行目录> --json`，逐个读取返回的 `instructions` 路径。需要直属拆分时使用 `--expand`；后续 next 保留最初的 `--expand` 和 `--review-rounds` 设置。
 2. 按当前 job 的 `INSTRUCTIONS.md` 主动读图、判断、写草稿或操作 Krita。程序不会替你绘制、生图、拼装 KRA，也不会自动调度下一步。任务包已给出带实际绝对路径的 CLI 命令；逐步执行并检查输出，不把所有分支整段粘贴执行。
 3. 实际打开 preview 生成的图片；修改草稿后重新 preview。通过 submit 提交路径、名字、草稿或结论。仅最终提交成功后继续 next，中间的 --paths、--levels、--group 不是本 job 完成。
-4. 无待办时检查 blocked 和 status；有阻塞、没有所需能力、缺密钥或无法核对时停止并报告具体路径及原因。blocked 不是质量通过；不要继续推进并声称成功。区分 part 阶段完成与整个 Krita 交付完成。
+4. 无待办时检查 blocked 和 status；有阻塞、没有所需能力、缺密钥或无法核对时停止并报告具体路径及原因。SVG 轮廓及补全审批遇到 blocked 或审查轮数耗尽但未通过会阻塞，不能以已返修作为通过。SVG review 与 completion-review 的 pass 都须按任务包提交 --checks 证据，补全审查通过后才能继续拆层。区分 part 阶段完成与整个 Krita 交付完成。
 
 ## 约定
 

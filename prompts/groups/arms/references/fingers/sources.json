@@ -1,0 +1,248 @@
+{
+  "purpose": "完整指体与隐藏余量的形状先验；不提供当前角色姿势、宽度、肤色、坐标或具体指名映射。",
+  "file": "complete-fingers.png",
+  "sha256": "528db2606985dbb217ddd71106f19a2daac795bf323bf00b74c51b69ba046762",
+  "layout": {
+    "top": [
+      "Milly 指4L",
+      "Milly 指3L",
+      "Milly 指2L",
+      "Milly 指1L",
+      "Milly 手掌L"
+    ],
+    "bottom": [
+      "樱桃 ArtMesh378",
+      "樱桃 ArtMesh379",
+      "樱桃 ArtMesh380",
+      "樱桃 ArtMesh382",
+      "樱桃 ArtMesh383"
+    ]
+  },
+  "sources": [
+    {
+      "model": "Milly",
+      "psdLayer": "/上身/左臂/手L/指4L",
+      "bounds": [
+        2100,
+        2395,
+        2183,
+        2511
+      ],
+      "source": "米粒模型配布4.1版本用/Milly原画.psd",
+      "extractedFile": "指4L.png",
+      "extractedSha256": "4c6ef50d31cf7d1ef0b67d226403ac9578a6e80e0a35f28b14159e4b41811c5c"
+    },
+    {
+      "model": "Milly",
+      "psdLayer": "/上身/左臂/手L/指3L",
+      "bounds": [
+        2106,
+        2411,
+        2218,
+        2546
+      ],
+      "source": "米粒模型配布4.1版本用/Milly原画.psd",
+      "extractedFile": "指3L.png",
+      "extractedSha256": "ed06208017f2cde26aa4a1d4ea2f534cac2137993af7e36db4af405e6952785c"
+    },
+    {
+      "model": "Milly",
+      "psdLayer": "/上身/左臂/手L/指2L",
+      "bounds": [
+        2135,
+        2367,
+        2225,
+        2582
+      ],
+      "source": "米粒模型配布4.1版本用/Milly原画.psd",
+      "extractedFile": "指2L.png",
+      "extractedSha256": "17c1db323b7ffecb777c50c7068db0bc8ac6c24b8d5df50c74351c0b5ac077c7"
+    },
+    {
+      "model": "Milly",
+      "psdLayer": "/上身/左臂/手L/手掌L",
+      "bounds": [
+        2031,
+        2281,
+        2204,
+        2451
+      ],
+      "source": "米粒模型配布4.1版本用/Milly原画.psd",
+      "extractedFile": "手掌L.png",
+      "extractedSha256": "8fe2561335b86f7c5ebe18ff38f770ac0db7b40a401aa75f0d331e95f721dcdd"
+    },
+    {
+      "model": "Milly",
+      "psdLayer": "/上身/左臂/手L/指1L",
+      "bounds": [
+        2042,
+        2343,
+        2147,
+        2529
+      ],
+      "source": "米粒模型配布4.1版本用/Milly原画.psd",
+      "extractedFile": "指1L.png",
+      "extractedSha256": "c838d591602d2139eb129d07b95278bf14db8653df8738059b3db3a1209124fe"
+    },
+    {
+      "model": "A樱桃蛋糕天使免费版",
+      "mesh": "ArtMesh378",
+      "part": "Part77",
+      "label": "手R",
+      "chain": [
+        {
+          "id": "Part77",
+          "name": "手R"
+        },
+        {
+          "id": "Part72",
+          "name": "双臂"
+        },
+        {
+          "id": "Part101",
+          "name": "草莓蛋糕天使修改-补.psd"
+        }
+      ],
+      "mocSha256": "8950424a756a49b2fc71c63907bdf417a5ef5e9b9c2e68414aee45908efbcab4",
+      "uvBounds": [
+        0.9638671875,
+        0.701416015625,
+        0.992431640625,
+        0.7451171875
+      ],
+      "method": "UV triangle crop; atlas orientation retained; candidate requires visual identification",
+      "source": "A樱桃蛋糕天使免费版/A樱桃蛋糕天使免费版.moc3",
+      "texture": "A樱桃蛋糕天使免费版/A樱桃蛋糕天使免费版.8192/texture_00.png",
+      "extractedFile": "ArtMesh378.png",
+      "extractedSha256": "bda992184eff58553ba31ac17bb18be0f172e5fa5e4c4fa9a4dc6ece6e8d7b71"
+    },
+    {
+      "model": "A樱桃蛋糕天使免费版",
+      "mesh": "ArtMesh379",
+      "part": "Part77",
+      "label": "手R",
+      "chain": [
+        {
+          "id": "Part77",
+          "name": "手R"
+        },
+        {
+          "id": "Part72",
+          "name": "双臂"
+        },
+        {
+          "id": "Part101",
+          "name": "草莓蛋糕天使修改-补.psd"
+        }
+      ],
+      "mocSha256": "8950424a756a49b2fc71c63907bdf417a5ef5e9b9c2e68414aee45908efbcab4",
+      "uvBounds": [
+        0.9101022481918335,
+        0.936767578125,
+        0.9528268575668335,
+        0.9951171875
+      ],
+      "method": "UV triangle crop; atlas orientation retained; candidate requires visual identification",
+      "source": "A樱桃蛋糕天使免费版/A樱桃蛋糕天使免费版.moc3",
+      "texture": "A樱桃蛋糕天使免费版/A樱桃蛋糕天使免费版.8192/texture_01.png",
+      "extractedFile": "ArtMesh379.png",
+      "extractedSha256": "585444530505b57deef8bda14ff917f0b00b53d80cf9603b67085019d0ac052b"
+    },
+    {
+      "model": "A樱桃蛋糕天使免费版",
+      "mesh": "ArtMesh380",
+      "part": "Part77",
+      "label": "手R",
+      "chain": [
+        {
+          "id": "Part77",
+          "name": "手R"
+        },
+        {
+          "id": "Part72",
+          "name": "双臂"
+        },
+        {
+          "id": "Part101",
+          "name": "草莓蛋糕天使修改-补.psd"
+        }
+      ],
+      "mocSha256": "8950424a756a49b2fc71c63907bdf417a5ef5e9b9c2e68414aee45908efbcab4",
+      "uvBounds": [
+        0.7578125,
+        0.0608973503112793,
+        0.7850462794303894,
+        0.0888671875
+      ],
+      "method": "UV triangle crop; atlas orientation retained; candidate requires visual identification",
+      "source": "A樱桃蛋糕天使免费版/A樱桃蛋糕天使免费版.moc3",
+      "texture": "A樱桃蛋糕天使免费版/A樱桃蛋糕天使免费版.8192/texture_01.png",
+      "extractedFile": "ArtMesh380.png",
+      "extractedSha256": "58761acf307507ebce6ae75e4acc65f86138a5e27bff054abfcaa77c2ea5cab0"
+    },
+    {
+      "model": "A樱桃蛋糕天使免费版",
+      "mesh": "ArtMesh382",
+      "part": "Part77",
+      "label": "手R",
+      "chain": [
+        {
+          "id": "Part77",
+          "name": "手R"
+        },
+        {
+          "id": "Part72",
+          "name": "双臂"
+        },
+        {
+          "id": "Part101",
+          "name": "草莓蛋糕天使修改-补.psd"
+        }
+      ],
+      "mocSha256": "8950424a756a49b2fc71c63907bdf417a5ef5e9b9c2e68414aee45908efbcab4",
+      "uvBounds": [
+        0.6689453125,
+        0.055769920349121094,
+        0.6949562430381775,
+        0.0830078125
+      ],
+      "method": "UV triangle crop; atlas orientation retained; candidate requires visual identification",
+      "source": "A樱桃蛋糕天使免费版/A樱桃蛋糕天使免费版.moc3",
+      "texture": "A樱桃蛋糕天使免费版/A樱桃蛋糕天使免费版.8192/texture_01.png",
+      "extractedFile": "ArtMesh382.png",
+      "extractedSha256": "f96eec162c60665a57f1c19c7c68a4ba3e8f88694c7c359a4beca0a7646de873"
+    },
+    {
+      "model": "A樱桃蛋糕天使免费版",
+      "mesh": "ArtMesh383",
+      "part": "Part77",
+      "label": "手R",
+      "chain": [
+        {
+          "id": "Part77",
+          "name": "手R"
+        },
+        {
+          "id": "Part72",
+          "name": "双臂"
+        },
+        {
+          "id": "Part101",
+          "name": "草莓蛋糕天使修改-补.psd"
+        }
+      ],
+      "mocSha256": "8950424a756a49b2fc71c63907bdf417a5ef5e9b9c2e68414aee45908efbcab4",
+      "uvBounds": [
+        0.6337890625,
+        0.05943220853805542,
+        0.6607801914215088,
+        0.0869140625
+      ],
+      "method": "UV triangle crop; atlas orientation retained; candidate requires visual identification",
+      "source": "A樱桃蛋糕天使免费版/A樱桃蛋糕天使免费版.moc3",
+      "texture": "A樱桃蛋糕天使免费版/A樱桃蛋糕天使免费版.8192/texture_01.png",
+      "extractedFile": "ArtMesh383.png",
+      "extractedSha256": "3ef789393447cbfaf31d774dc55e8e57e4893f368252e1692d9cae7979e50865"
+    }
+  ]
+}

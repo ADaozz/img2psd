@@ -108,7 +108,7 @@ jobs/<seq>-<step>-<group-slug>/
 3. ✅ **整层去重与直属拆分**：按层派发、批次记录、程序生成 ID 并写回组树（`--expand`）。
 4. ✅ **遮挡层级规划**：`occlusion.json` v3（back-to-front，逐件 `level/note/check`，候选叠放核对）。
 5. ✅ **L3 图片后端**：`local`、`api`、`apiyi`（API易图片编辑）、`codex`，按环境变量或模型选择；简化和素体交付带 Alpha 的 PNG：GPT 原生校验、Nano 双背景恢复；不做单背景去背。
-6. ✅ **raster / clothing-raster**：`raster.json` 驱动步骤；绘制与 review/返修是独立 job（`.drawn` → review → 返修 → review，轮数用完按 repaired 定稿）。
+6. ✅ **raster / clothing-raster**：`raster.json` 驱动步骤；绘制与 review/返修是独立 job（`.drawn` → review → 返修 → review，轮数用完按 repaired 定稿；此栅格行为本轮暂缓调整）。
 
 ## 风险与取舍
 
@@ -116,3 +116,5 @@ jobs/<seq>-<step>-<group-slug>/
 - **无会话返修**：返修质量可能略降；换来的是任何 agent 可接手、可并行、可断电续跑。
 - **review 轮数**：仍由程序计数（`stages/review/*.review.json`），不依赖 agent 自觉。
 - **观测证据**：由 CLI 登记，agent 只拿到 PNG 路径；这一条是"任何 agent"方案能守住质量底线的关键。
+
+分组特化提示词与参考按完整 ID 精确加载；SVG review / completion-review 的通过结论绑定当前候选、参考和完整预览证据，补全通过后才放行子层。详见 docs/UPSTREAM-PROMPT-AUDIT.md。

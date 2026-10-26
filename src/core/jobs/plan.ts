@@ -2,7 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { walkGroups, type GroupNode } from '../facts/groups.ts';
-import { readReviewReport, type ReviewReport } from '../facts/review.ts';
+import { readReviewReport } from '../facts/review.ts';
+import { bytesHash, matchesHash } from '../facts/hash.ts';
 import { loadRasterConfig, upstreamDirectory, type RasterStep } from '../raster/config.ts';
 import type { Canvas } from '../svg/validate.ts';
 
@@ -24,6 +25,7 @@ export type PlanItem = {
   deliverable?: string;
   outputDir?: string;
   mergePreview?: boolean;
+  parentSvg?: string;
   expectsReview?: boolean;
   reviewRounds?: number;
   reference?: string;
@@ -73,17 +75,25 @@ async function readGroups(run: string): Promise<{ subject?: string; groups: Grou
   return { subject: raw.subject, groups: raw.groups };
 }
 
-type Phase = 'draw' | 'review' | 'repair' | 'done';
+type Phase = 'draw' | 'review' | 'repair' | 'done' | 'blocked';
 
 export async function outlinePhase(run: string, id: string, maxRounds: number): Promise<Phase> {
-  if (!await exists(outlinePath(run, id))) return 'draw';
-  const report = await readReviewReport(reviewPath(run, id), id).catch(() => ({ groupId: id, reviews: [], repairs: 0 }) as ReviewReport);
+  return reviewedPhase(run, id, maxRounds, outlinePath(run, id), reviewPath(run, id));
+}
+
+async function reviewedPhase(run: string, id: string, maxRounds: number, candidatePath: string, reportPath: string): Promise<Phase> {
+  if (!await exists(candidatePath)) return 'draw';
+  const report = await readReviewReport(reportPath, id);
   if (!report.reviews.length) return 'review';
   const revises = report.reviews.filter(entry => entry.verdict === 'revise').length;
   const last = report.reviews.at(-1)!;
+  if (last.verdict === 'pass') {
+    const [candidate, reference] = await Promise.all([readFile(candidatePath), readFile(join(run, 'references/base-subject.png'))]);
+    return last.checks && matchesHash(candidate, last.candidateHash) && last.referenceHash === bytesHash(reference) ? 'done' : 'review';
+  }
+  if (last.verdict === 'blocked') return 'blocked';
   if (last.verdict === 'revise' && report.repairs < revises) return 'repair';
-  if (last.verdict === 'pass' || last.verdict === 'blocked') return 'done';
-  if (report.reviews.length >= maxRounds && report.repairs >= revises) return 'done';
+  if (report.reviews.length >= maxRounds) return 'blocked';
   return 'review';
 }
 
@@ -113,7 +123,9 @@ async function planParts(run: string, options: { maxRounds: number; expand: bool
   const blocked: { id: string; message: string }[] = [];
   const completed: string[] = [];
   for (const entry of entries) {
-    if (await exists(partPath(run, entry.group.id))) completed.push(entry.group.id);
+    const id = entry.group.id;
+    if (await exists(partPath(run, id)) && await reviewedPhase(run, id, options.maxRounds, partPath(run, id),
+      join(run, 'stages/completion-review', `${id}.review.json`)) === 'done') completed.push(id);
   }
 
   const depths = [...new Set(entries.map(entry => entry.depth))].sort((a, b) => a - b);
@@ -129,6 +141,10 @@ async function planParts(run: string, options: { maxRounds: number; expand: bool
       for (const item of phases) {
         if (item.phase === 'done') continue;
         const id = item.entry.group.id;
+        if (item.phase === 'blocked') {
+          blocked.push({ id, message: 'review 被阻塞或审查轮数已用完但仍无通过结论；停止下游，处理反馈后重新审查' });
+          continue;
+        }
         const feedback = item.phase === 'repair'
           ? (await readReviewReport(reviewPath(run, id), id)).reviews.filter(entry => entry.verdict === 'revise').at(-1)?.feedback
           : undefined;
@@ -169,11 +185,39 @@ async function planParts(run: string, options: { maxRounds: number; expand: bool
         items.push({
           kind: 'completion', groupId: id, reason: 'completion', depth,
           source: await exists(reduced) ? reduced : outlinePath(run, id),
+          ...(entry.parent ? { parentSvg: partPath(run, entry.parent.id) } : {}),
         });
       }
       for (const entry of entries) if (entry.depth > depth) {
         blocked.push({ id: entry.group.id, message: `深度 ${depth} 层尚未完成` });
       }
+      break;
+    }
+
+    const completionOpen: PlanItem[] = [];
+    let completionBlocked = false;
+    for (const entry of layer) {
+      const id = entry.group.id;
+      const reportPath = join(run, 'stages/completion-review', `${id}.review.json`);
+      const phase = await reviewedPhase(run, id, options.maxRounds, partPath(run, id), reportPath);
+      if (phase === 'done') continue;
+      if (phase === 'blocked') {
+        completionBlocked = true;
+        blocked.push({ id, message: '补全 review 未通过或轮数已耗尽，不能拆分子层或发布最终叠放' });
+        continue;
+      }
+      const reduced = reductionPath(run, id);
+      const report = await readReviewReport(reportPath, id);
+      completionOpen.push({ kind: phase === 'repair' ? 'completion' : 'completion-review',
+        groupId: id, reason: phase === 'repair' ? 'repair' : 'review', depth,
+        source: await exists(reduced) ? reduced : outlinePath(run, id), prefill: partPath(run, id),
+        ...(phase === 'repair' ? { feedback: report.reviews.at(-1)?.feedback } : {}),
+        ...(entry.parent ? { parentSvg: partPath(run, entry.parent.id) } : {}),
+      });
+    }
+    if (completionOpen.length || completionBlocked) {
+      settled = false;
+      items.push(...completionOpen);
       break;
     }
 

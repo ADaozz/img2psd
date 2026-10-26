@@ -10,7 +10,7 @@
 
 以下相对路径示例从项目根目录执行，尖括号内容须替换为实际路径。`l2d` 只是接口简称，无需安装同名全局命令；生成的任务包使用带引号的绝对路径命令，可从任意目录执行。
 
-外部 agent 负责实际执行循环、查看图片、调用图片 CLI、绘制 SVG 和操作 Krita。程序只做 next 派发、preview 渲染、submit 校验/发布，不自动绘图、不自动开始下一步。图片 CLI 内部负责模型请求与 Nano 双背景恢复，agent 不手动拆这两次请求。
+外部 agent 负责实际执行循环、查看图片、调用图片 CLI、绘制 SVG 和操作 Krita。没有视觉通道或环境禁止图片读入上下文时必须报告 blocked，不得用颜色分类、掩膜、IoU 或覆盖率替代视觉 review 并提交 pass。程序只做 next 派发、preview 渲染、submit 校验/发布，不自动绘图、不自动开始下一步。图片 CLI 内部负责模型请求与 Nano 双背景恢复，agent 不手动拆这两次请求。
 
 新 part 任务先在新的运行目录放置 `input/original.png` 和空的 `groups.json`：`{"version":1,"groups":[]}`。已有任务直接 next 续跑，不重建或覆盖组树。参考准备通过后，空组树会派发 grouping。
 
@@ -32,7 +32,8 @@ node src/cli/main.ts submit  --job <job>                     # 4. 提交，程�
 | preparation | 需要时简化，再生成素体 PNG | `submit --note ...` |
 | grouping | 当前一层的 name/note 数组 | `submit --groups @file --subject character或other` |
 | outline / repair | job/out/draft.svg | 预览后 `submit` |
-| review / raster-review | 逐项核对反馈，不改候选 | `submit --verdict ... --feedback ...` |
+| review / completion-review | 当前候选的逐项与分区核对证据，不改候选 | `submit --verdict pass --checks @file --feedback ...`，或 revise/blocked |
+| raster-review | Krita 实际图层审查，不改候选 | `submit --verdict ... --feedback ...` |
 | reduction | 实际改动的各组 SVG | 先逐组 `--group --svg`，最后 `--note` |
 | completion | 新增闭合 paths 数组，或 [] | `--paths @file` 后重看 svg/blend，再 `--note` |
 | children | 当前直属 name/kind/note 数组，或 [] | `--children @file --note ...` |
@@ -41,14 +42,17 @@ node src/cli/main.ts submit  --job <job>                     # 4. 提交，程�
 
 JSON 文件由执行者写在当前 job/out 中。表中的示意字段按当前素材填写；中间的 --paths、--levels、--group 不表示任务已完成。任务正文里的“只返回 JSON/结束”仅指当前判断或绘制环节，不能替代 CLI 最终提交。
 
-有报错先按原因修正当前 job，不能跳过校验或编辑观测/标记。next 没有 job 时检查 blocked 和 status；有阻塞或任何无法核对的结果就停止并报告。当前 blocked 审查结论会被程序计入该轮结束，执行者不能把它当作质量通过继续推进。完成 part 阶段也不等于已完成 Krita 位图交付。
+有报错先按原因修正当前 job，不能跳过校验或编辑观测/标记。next 没有 job 时检查 blocked 和 status；有阻塞或任何无法核对的结果就停止并报告。SVG 轮廓及补全审批遇到 blocked 或轮数耗尽仍未通过时，程序返回阻塞并停止下游，不能将修过稿等同于 review 通过。完成 part 阶段也不等于已完成 Krita 位图交付。
 
-review 类 job 不做修改，只给结论：
+SVG 的 review 与 completion-review 都只给结论，不修改候选。先按本任务包的 inputs/review-plan.json 生成并打开整图 svg/blend/edge，再查看所有选框的 2 倍 blend/edge。填写 inputs/review-checks.template.json 对应的实际检查结果到 out/review-checks.json，六项为外形、职责归属、完整性、孔洞、连接、配饰归属，逐块填写依据：
 
 ```bash
-node src/cli/main.ts preview --job <job> --mode blend        # 看候选与参考
-node src/cli/main.ts submit  --job <job> --verdict pass|revise|blocked --feedback "具体意见"
+node src/cli/main.ts submit --job <job> --verdict pass --checks @<job>/out/review-checks.json --feedback "实际检查结论"
 ```
+
+有确定缺陷时提交 revise 和具体坐标/依据/改法；输入或工具故障、必须回退上游时给 blocked。不能只写“可以/整体一致”通过。系统验证当前候选和参考哈希、整图与局部预览及预览文件未被替换；这约束证据完整性，仍不能证明 agent 真正看过图或判断一定正确。
+
+补全后的完整 SVG 会单独派发 completion-review，通过后才能拆子层或最终叠放。补全前的轮廓 pass 不能代替补全后的审查。修订后旧证据失效；没有新证据的历史 pass 会重新派发审查。已有旧 job 的 INSTRUCTIONS.md 不会自动变化，续跑应重新 next 领取。
 
 遮挡补全类 job 只提供新增闭合路径，原形由程序保留：
 
@@ -161,7 +165,7 @@ node src/cli/main.ts preview --job <review job> --mode blend
 node src/cli/main.ts submit  --job <review job> --verdict pass|revise|blocked --feedback "..."
 ```
 
-`revise` 会派发返修 job（同一交付清单，附 review 意见）；`pass` 才写 `.completed`，轮数用完按 `repaired` 定稿。
+`revise` 会派发返修 job（同一交付清单，附 review 意见）；`pass` 才写 `.completed`，本轮只调整 SVG 轮廓及补全审批，栅格仍沿用轮数用完按 repaired 定稿的旧行为；执行者不能将该状态当作质量通过，后续待测试再调整。
 下一步骤的 `inputs` 未就绪时只报阻塞，不提前派发。
 
 ## 图片生成与放大（可选）
@@ -194,3 +198,7 @@ node src/cli/main.ts imagegen --prompt "..." --out <png> [--ref <png> ...]
     observations.json          程序登记的观测
     result.json                提交后的事实
 ```
+
+## 上游提示词核对
+
+见 [UPSTREAM-PROMPT-AUDIT.md](UPSTREAM-PROMPT-AUDIT.md)。分组特化正文按完整 ID 和阶段精确匹配，配套结构参考和同级底稿也会列入任务包；上游 step01 的栅格 review 配置本地尚未同步，本轮暂缓改动栅格模板。

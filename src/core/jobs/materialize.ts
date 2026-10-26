@@ -11,6 +11,8 @@ import {
 } from './plan.ts';
 import type { Canvas } from '../svg/validate.ts';
 import { loadRasterConfig, upstreamDirectory } from '../raster/config.ts';
+import { reviewPlan, evidenceTemplate } from './review-policy.ts';
+import { groupPrompt, groupReferences, type GroupStage } from './group-prompts.ts';
 
 // job 目录是给执行者的完整任务包。这里不画 SVG，也不调用生图或放大。
 
@@ -53,6 +55,7 @@ export type JobRecord = {
   layerIds?: string[];
   depth?: number;
   candidateHash?: string;
+  review?: Awaited<ReturnType<typeof reviewPlan>>;
   required?: string[];
   outputDir?: string;
   expectsReview?: boolean;
@@ -62,8 +65,15 @@ export type JobRecord = {
 
 async function promptText(names: string[]): Promise<string> {
   const parts = [];
-  for (const name of names) parts.push(`### ${name}\n\n${(await readFile(join(promptsRoot, name), 'utf8')).trim()}`);
+  for (const name of names) parts.push(`### ${join(promptsRoot, name)}\n\n${(await readFile(join(promptsRoot, name), 'utf8')).trim()}`);
   return parts.join('\n\n');
+}
+
+async function groupText(id: string, stage: GroupStage, fallback: string, run: string, dir: string): Promise<string> {
+  const selected = await groupPrompt(id, stage, fallback);
+  const references = await groupReferences(id, stage, run, dir);
+  return [`### ${selected.path}`, selected.text.trim(), ...references.map(reference =>
+    `附加参考：${reference.path}；用途：${reference.description}${reference.sourceSvg ? `；只读源 SVG：${reference.sourceSvg}` : ''}`)].join('\n\n');
 }
 
 export async function readJob(jobDir: string): Promise<JobRecord> {
@@ -86,7 +96,7 @@ export async function materialize(plan: Plan, item: PlanItem, maxRounds: number,
   const record: JobRecord = {
     id: `${item.kind}:${item.groupId}`,
     kind: item.kind, reason: item.reason, groupId: item.groupId, run: plan.run, canvas: plan.canvas,
-    inputs: {},
+    inputs: { ...(item.parentSvg ? { parentSvg: item.parentSvg } : {}) },
     output: { draft },
     ...(prior.draftHash ? { draftHash: prior.draftHash } : {}),
     ...(prior.reductions ? { reductions: prior.reductions } : {}),
@@ -114,13 +124,17 @@ export async function materialize(plan: Plan, item: PlanItem, maxRounds: number,
     if (item.source) record.inputs.parentSvg = item.source;
     record.output.published = outlinePath(plan.run, item.groupId);
     if (item.reason === 'repair' && item.prefill) await copyFile(item.prefill, draft);
-  } else if (item.kind === 'review') {
+  } else if (item.kind === 'review' || item.kind === 'completion-review') {
     record.inputs.reference = reference;
     record.inputs.candidate = item.prefill;
     record.inputs.source = item.prefill;
     record.output.draft = item.prefill ?? draft;
-    record.output.published = join(plan.run, 'stages/review', `${item.groupId}.review.json`);
+    record.output.published = join(plan.run, item.kind === 'completion-review' ? 'stages/completion-review' : 'stages/review', `${item.groupId}.review.json`);
+    if (item.kind === 'review' && item.source) record.inputs.parentSvg = item.source;
     if (item.prefill) record.candidateHash = svgHash(await readFile(item.prefill));
+    record.review = await reviewPlan(record.inputs.candidate!, reference, plan.canvas);
+    await writeAtomic(join(dir, 'inputs/review-plan.json'), JSON.stringify(record.review, null, 2) + '\n');
+    await writeAtomic(join(dir, 'inputs/review-checks.template.json'), JSON.stringify(evidenceTemplate(record.review), null, 2) + '\n');
   } else if (item.kind === 'reduction') {
     const merged = join(dir, 'inputs/merged.svg');
     await writeMergedPreview(plan.run, item.layerIds ?? [], plan.canvas, merged);
@@ -218,19 +232,23 @@ async function instructions(plan: Plan, item: PlanItem, dir: string, record: Job
   } else if (item.kind === 'grouping') {
     lines.push('只提交一层 name/note。程序生成 id 并写入 groups.json。', '', imageTools, '', await promptText(['4-初始分组.md']));
   } else if (item.kind === 'outline' && item.reason === 'repair') {
-    lines.push('返修要求', item.feedback ?? '', '', `草稿：${record.output.draft}`, `参考：${record.inputs.reference ?? ''}`, '', imageTools, '', await promptText(['7-轮廓返修.md']));
+    lines.push('返修要求', item.feedback ?? '', '', `草稿：${record.output.draft}`, `参考：${record.inputs.reference ?? ''}`, '', imageTools, '', await groupText(item.groupId, 'outline', '5-组轮廓.md', plan.run, dir), await promptText(['7-轮廓返修.md']));
   } else if (item.kind === 'outline') {
     lines.push(`组：${item.groupId}`, `草稿：${record.output.draft}`, `参考：${record.inputs.reference ?? ''}`);
     if (record.inputs.parentSvg) lines.push(`父轮廓：${record.inputs.parentSvg}`);
-    lines.push('', imageTools, '', await promptText(['5-组轮廓.md']));
-  } else if (item.kind === 'review') {
-    lines.push('本步只给结论，不改 SVG。', `候选：${record.inputs.candidate ?? ''}`, '', await promptText(['6-轮廓review.md']));
+    lines.push('', imageTools, '', await groupText(item.groupId, 'outline', '5-组轮廓.md', plan.run, dir));
+  } else if (item.kind === 'review' || item.kind === 'completion-review') {
+    lines.push('本步只给结论，不改 SVG。', `候选：${record.inputs.candidate ?? ''}`);
+    if (item.kind === 'completion-review') lines.push(`本轮审查补全后的完整 SVG。隐藏部分不能与遮挡物像素硬匹配，要对照本组补全职责核对完整形体、头盖、脸型、指根等连接及真实空隙；源稿可见部分须保留。`,
+      `补全前只读底稿：${item.source}`, await groupText(item.groupId, 'completion', '9-正面遮挡补全.md', plan.run, dir), await promptText(['9-补全操作约定.md']));
+    lines.push('', await groupText(item.groupId, 'review', item.kind === 'completion-review' ? '9-补全review.md' : '6-轮廓review.md', plan.run, dir));
   } else if (item.kind === 'reduction') {
     lines.push('先查看整层合成预览，再只提交真正改动的组。未提交的组由程序原样复制。', `合成图：${record.inputs.merged ?? ''}`, '', await promptText(['8-同层轮廓去重.md']));
   } else if (item.kind === 'completion') {
-    lines.push('只提交新增闭合路径。程序从只读底稿合成草稿，并保留原形。', `底稿：${record.inputs.source ?? ''}`, `草稿：${record.output.draft}`, '', await promptText(['9-正面遮挡补全.md', '9-补全操作约定.md']));
+    if (item.feedback) lines.push('补全返修意见', item.feedback, '只重做新增路径，不修改原形；重新提交完整新增路径数组，不在旧补全层上叠加第二层。');
+    lines.push('只提交新增闭合路径。程序从只读底稿合成草稿，并保留原形。', `底稿：${record.inputs.source ?? ''}`, `草稿：${record.output.draft}`, '', await groupText(item.groupId, 'completion', '9-正面遮挡补全.md', plan.run, dir), await promptText(['9-补全操作约定.md']), imageTools);
   } else if (item.kind === 'children') {
-    lines.push('只提交直属 name/kind/note。程序生成完整 ID。空列表表示当前节点终止。不要用单个 part 包装。', '', await promptText(['10-直属结构拆分.md', '10-拆分操作约定.md']));
+    lines.push('只提交直属 name/kind/note。程序生成完整 ID。空列表表示当前节点终止。不要用单个 part 包装。', '', await groupText(item.groupId, 'children', '10-直属结构拆分.md', plan.run, dir), await promptText(['10-拆分操作约定.md']));
   } else if (item.kind === 'occlusion') {
     lines.push('先看 preview.svg，再提交覆盖全部终止 part 的 level。看过候选叠放后，逐件给出检查依据。', `预览：${join(plan.run, 'preview.svg')}`, `候选：${record.inputs.candidate ?? ''}`, '', await promptText(['11-遮挡层级规划.md']));
   } else if (item.kind === 'raster' || item.kind === 'raster-review') {
@@ -263,10 +281,28 @@ async function instructions(plan: Plan, item: PlanItem, dir: string, record: Job
   } else if (item.kind === 'outline') {
     lines.push('', '## 自检与提交', `将 SVG 写到 ${record.output.draft}。正文所称 .draft.svg 指本 job 的 out/draft.svg。`,
       commands([preview('svg'), preview('blend'), preview('edge'), submit]));
-  } else if (item.kind === 'review' || item.kind === 'raster-review') {
+  } else if (item.kind === 'review' || item.kind === 'completion-review') {
+    lines.push('', '## 必做审查与通过证据',
+      '先确认具备实际看图能力。无视觉通道或环境禁止图片进入上下文时报告 blocked，禁止用颜色统计、掩膜、IoU、覆盖率代替视觉审查并提交 pass。',
+      `先看 ${record.inputs.reference} 的原图，再运行并实际打开整图独显、叠加和红色边缘图：`,
+      commands([preview('svg'), preview('blend'), preview('edge')]),
+      `系统选框清单：${join(dir, 'inputs/review-plan.json')}。下面以原图坐标覆盖本候选的完整范围（含外围留边），必须逐块检查，不能只看整图缩略图：`);
+    for (const crop of record.review!.regions) lines.push(commands([
+      `${preview('blend')} --crop ${crop.join(',')} --scale 2`,
+      `${preview('edge')} --crop ${crop.join(',')} --scale 2`,
+    ]));
+    lines.push('形状先查多画/漏画：孤立长条、异常尖角、误领的衣物与配饰、脸部被头发当成孔洞、颈肩/腰胯/手腕/脚踝接缝都须对照实际原图与职责逐项确认。跨组重叠本身不构成错误，不凭截图配色判断归属。',
+      `通过证据模板：${join(dir, 'inputs/review-checks.template.json')}。在 ${join(dir, 'out/review-checks.json')} 填写当前 candidateHash/referenceHash、六项检查的 verdict/detail 和全部选框的实际核对依据；pending/空白不能通过。`,
+      '六项分别为 silhouette（外形/异常延伸）、ownership（职责归属）、coverage（应有部件完整性）、holes（真实孔洞与误挖空）、connections（接缝与搭接）、accessories（配饰归属）。detail 必须写图像位置、参考依据与判断，不填“可以/整体一致”。',
+      '有明确问题应给 revise，在 feedback 中一次列出问题编号、原图坐标/区域、当前形状、参考依据和应改方式；不能为了凑通过证据把疑点写成 pass。无法核对给 blocked 并报告。',
+      commands([`${submit} --verdict revise --feedback '填写具体问题与坐标、图像依据和修改要求'`]),
+      '只有整图、局部和六项检查全部通过时才执行：',
+      commands([`${submit} --verdict pass --checks ${jsonFile('review-checks.json')} --feedback '填写逐项检查结论与证据摘要'`]),
+      '候选或参考变化后，旧证据失效，必须重新领取、预览和填写；轮数耗尽但未通过时系统阻塞，不会自动定稿。');
+  } else if (item.kind === 'raster-review') {
     lines.push('', '## 看图与提交结论', commands([preview('blend'), `${submit} --verdict pass --feedback '填写逐项核对依据'`]),
       '按实际检查将 pass 改为 revise 或 blocked，必须填写具体 feedback。revise 后由 next 派发返修。',
-      '无法核对时可记录 blocked，但随后停止并报告；当前实现会将 blocked 计入该轮结束，不能将其当作质量通过并自动继续。');
+      '栅格流程本轮未调整：遇到 blocked 仍须停止并报告，不能将程序的轮次结束当成质量通过。');
   } else if (item.kind === 'completion') {
     lines.push('', '## 新增路径与提交',
       `在 ${join(dir, 'out/paths.json')} 写新增路径数组，每项 {"d":"闭合路径","fillRule":"nonzero"}，无需新增则写 []。不要直接修改合成草稿或只读底稿。`,

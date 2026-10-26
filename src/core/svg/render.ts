@@ -1,4 +1,5 @@
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import sharp from 'sharp';
 import { checkParentBounds, type Canvas } from './validate.ts';
@@ -79,7 +80,7 @@ export async function renderPreview(options: PreviewOptions, request: PreviewReq
       ? await checkParentBounds(source, options.parent, options.canvas) : undefined;
     await mkdir(options.observationDirectory, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const savedPath = join(options.observationDirectory, `${stamp}-${mode}.png`);
+    const savedPath = join(options.observationDirectory, `${stamp}-${mode}-${randomUUID()}.png`);
     await writeFile(savedPath, data);
     return { source, mode, crop, scale, width: outWidth, height: outHeight, savedPath, ...(bounds ? { bounds } : {}) };
   }
@@ -114,7 +115,7 @@ export async function renderPreview(options: PreviewOptions, request: PreviewReq
     ? await checkParentBounds(source, options.parent, options.canvas) : undefined;
   await mkdir(options.observationDirectory, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const savedPath = join(options.observationDirectory, `${stamp}-${mode}.png`);
+  const savedPath = join(options.observationDirectory, `${stamp}-${mode}-${randomUUID()}.png`);
   await writeFile(savedPath, data);
   return { source, mode, crop, scale, width: outWidth, height: outHeight, savedPath, ...(bounds ? { bounds } : {}) };
 }

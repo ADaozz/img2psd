@@ -1,0 +1,3 @@
+# Include the configured reference board; keep other local derivatives ignored.
+*.png
+!complete-fingers.png

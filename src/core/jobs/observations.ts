@@ -9,6 +9,11 @@ export type Observation = {
   savedPath: string;
   at: string;
   hash: string;
+  reference?: string;
+  referenceHash?: string;
+  imageHash?: string;
+  crop?: number[];
+  scale?: number;
 };
 
 const fileOf = async (path: string) => {
@@ -26,10 +31,14 @@ export async function readObservations(jobDir: string): Promise<Observation[]> {
 
 export async function appendObservation(jobDir: string, observation: {
   source: string; mode: string; savedPath: string; at: string;
+  reference?: string; crop?: number[]; scale?: number;
 }): Promise<void> {
   const list = await readObservations(jobDir);
   const { hash } = await fileOf(observation.source);
-  list.push({ ...observation, source: await realpath(observation.source), hash });
+  const reference = observation.reference ? await realpath(observation.reference) : undefined;
+  const referenceHash = reference ? bytesHash(await readFile(reference)) : undefined;
+  const imageHash = bytesHash(await readFile(observation.savedPath));
+  list.push({ ...observation, source: await realpath(observation.source), hash, reference, referenceHash, imageHash });
   await writeAtomic(join(jobDir, 'observations.json'), JSON.stringify(list, null, 2) + '\n');
 }
 

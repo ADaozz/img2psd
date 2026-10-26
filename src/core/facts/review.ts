@@ -1,10 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { matchesHash, svgHash } from './hash.ts';
 import { writeAtomic } from './groups.ts';
+import type { ReviewEvidence } from '../jobs/review-policy.ts';
 
 export type Verdict = 'pass' | 'revise' | 'blocked';
 export type ReviewEntry = {
   verdict: Verdict; feedback: string; candidateHash: string; at: string;
+  referenceHash?: string; checks?: ReviewEvidence;
 };
 export type ReviewReport = { groupId: string; reviews: ReviewEntry[]; repairs: number };
 

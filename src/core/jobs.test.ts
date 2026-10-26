@@ -15,6 +15,34 @@ const l2d = (...args: string[]) => run(process.execPath, [cli, ...args]);
 const square = (left: number, group = 'face') => `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">`
   + `<g id="${group}" data-group-path="${group}"><path d="M ${left} 16 H 48 V 48 H ${left} Z" fill="#e89b7d" stroke="none"/></g></svg>\n`;
 
+// Synthetic rectangle fixtures have known geometry. Exercise the complete review
+// contract; these notes assert fixture properties, not real-world visual quality.
+async function passReview(jobDir: string, feedback = '固定矩形样本范围符合测试设定') {
+  const job = JSON.parse(await readFile(join(jobDir, 'job.json'), 'utf8'));
+  const plan = job.review;
+  for (const mode of ['svg', 'blend', 'edge']) await l2d('preview', '--job', jobDir, '--mode', mode);
+  for (const crop of plan.regions) for (const mode of ['blend', 'edge']) {
+    await l2d('preview', '--job', jobDir, '--mode', mode, '--crop', crop.join(','), '--scale', '2');
+  }
+  const checks = { candidateHash: plan.candidateHash, referenceHash: plan.referenceHash,
+    items: Object.fromEntries(['silhouette', 'ownership', 'coverage', 'holes', 'connections', 'accessories']
+      .map(key => [key, { verdict: 'pass', detail: '测试矩形的边界、填充、归属由固定输入确定' }])),
+    regions: plan.regions.map((crop: number[]) => ({ crop, detail: '固定矩形无孔洞、无孤立附件' })) };
+  const path = join(jobDir, 'out/test-checks.json');
+  await writeFile(path, JSON.stringify(checks));
+  await l2d('submit', '--job', jobDir, '--verdict', 'pass', '--checks', `@${path}`, '--feedback', feedback);
+}
+
+async function reviewCompletions(runDir: string) {
+  const plan = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
+  assert.ok(plan.jobs.length > 0);
+  for (const job of plan.jobs) {
+    assert.equal(job.kind, 'completion-review');
+    await passReview(job.dir, '固定矩形补全保留了原形并符合测试设定');
+  }
+  return JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
+}
+
 // 驱动一层：所有绘制 job 提交后再跑 review。
 async function driveOutlines(runDir: string, svgs: Record<string, string>) {
   const draw = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
@@ -26,7 +54,7 @@ async function driveOutlines(runDir: string, svgs: Record<string, string>) {
   const review = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
   for (const job of review.jobs.filter((item: { kind: string }) => item.kind === 'review')) {
     await l2d('preview', '--job', job.dir, '--mode', 'blend');
-    await l2d('submit', '--job', job.dir, '--verdict', 'pass', '--feedback', '可以');
+    await passReview(job.dir, '可以');
   }
   return JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
 }
@@ -95,7 +123,7 @@ test('next → 绘制 → review → 返修 → review 通过 的完整闭环', 
     const secondReview = JSON.parse((await l2d('next', '--run', run_, '--json')).stdout);
     assert.equal(secondReview.jobs[0].kind, 'review');
     await l2d('preview', '--job', secondReview.jobs[0].dir, '--mode', 'edge');
-    await l2d('submit', '--job', secondReview.jobs[0].dir, '--verdict', 'pass', '--feedback', '与参考一致');
+    await passReview(secondReview.jobs[0].dir, '与参考一致');
 
     // 7. 轮廓定稿后终止节点进入补全；审查轮数与返修次数可追溯
     const done = JSON.parse((await l2d('next', '--run', run_, '--json')).stdout);
@@ -120,7 +148,7 @@ test('遮挡补全：只收新增闭合路径，程序合成并保留原形', as
     await l2d('submit', '--job', first.jobs[0].dir);
     const review = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
     await l2d('preview', '--job', review.jobs[0].dir, '--mode', 'blend');
-    await l2d('submit', '--job', review.jobs[0].dir, '--verdict', 'pass', '--feedback', '可以');
+    await passReview(review.jobs[0].dir, '可以');
 
     // 补全 job
     const completion = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
@@ -156,7 +184,22 @@ test('遮挡补全：只收新增闭合路径，程序合成并保留原形', as
     assert.equal(check.additions, 1);
     assert.equal(check.note, '补下缘被遮部分');
 
-    const done = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
+    const pendingReview = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
+    assert.equal(pendingReview.jobs[0].kind, 'completion-review');
+    assert.deepEqual(pendingReview.completed, []);
+    await l2d('preview', '--job', pendingReview.jobs[0].dir, '--mode', 'blend');
+    await l2d('submit', '--job', pendingReview.jobs[0].dir, '--verdict', 'revise', '--feedback', '测试新增下缘过长，缩至 y54');
+    const repair = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
+    assert.equal(repair.jobs[0].kind, 'completion');
+    assert.equal(repair.jobs[0].reason, 'repair');
+    assert.match(await readFile(join(repair.jobs[0].dir, 'INSTRUCTIONS.md'), 'utf8'), /缩至 y54/);
+    await l2d('submit', '--job', repair.jobs[0].dir, '--paths', JSON.stringify([{ d: 'M 16 48 H 48 V 54 H 16 Z' }]));
+    await l2d('preview', '--job', repair.jobs[0].dir, '--mode', 'svg');
+    await l2d('preview', '--job', repair.jobs[0].dir, '--mode', 'blend');
+    await l2d('submit', '--job', repair.jobs[0].dir, '--note', '按反馈只调整了新增下缘');
+    const completionReport = JSON.parse(await readFile(join(runDir, 'stages/completion-review/face.review.json'), 'utf8'));
+    assert.equal(completionReport.repairs, 1);
+    const done = await reviewCompletions(runDir);
     assert.deepEqual(done.completed, ['face']);
     assert.equal(done.jobs.length, 1);
     assert.equal(done.jobs[0].kind, 'occlusion');
@@ -175,7 +218,7 @@ test('补全草稿在设置路径后被改动时拒绝提交', async () => {
     await l2d('submit', '--job', first.jobs[0].dir);
     const review = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
     await l2d('preview', '--job', review.jobs[0].dir, '--mode', 'blend');
-    await l2d('submit', '--job', review.jobs[0].dir, '--verdict', 'pass', '--feedback', '可以');
+    await passReview(review.jobs[0].dir, '可以');
     const completion = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
     const jobDir = completion.jobs[0].dir;
     await l2d('submit', '--job', jobDir, '--paths', JSON.stringify([{ d: 'M 16 48 L 48 48 L 48 56 L 16 56 Z' }]));
@@ -268,8 +311,8 @@ test('直属拆分：程序生成 ID 并写入组树，子组随后可绘制', a
     await l2d('preview', '--job', completionDir, '--mode', 'blend');
     await l2d('submit', '--job', completionDir, '--note', '无需补全');
 
-    // 非 expand 模式不派发拆分，直接进入遮挡层级规划
-    plan = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
+    // 补全独立审查通过后，非 expand 模式直接进入遮挡层级规划
+    plan = await reviewCompletions(runDir);
     assert.equal(plan.jobs.length, 1);
     assert.equal(plan.jobs[0].kind, 'occlusion');
     assert.deepEqual(plan.completed, ['face']);
@@ -332,8 +375,8 @@ test('遮挡层级规划：覆盖全部终止 part，候选叠放后逐件检查
       await l2d('submit', '--job', job.dir, '--note', '无需补全');
     }
 
-    // 自动合并 + 层级规划 job
-    plan = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
+    // 补全审查通过后才自动合并 + 层级规划
+    plan = await reviewCompletions(runDir);
     assert.equal(plan.jobs.length, 1);
     assert.equal(plan.jobs[0].kind, 'occlusion');
     assert.ok(await readFile(join(runDir, 'preview.svg'), 'utf8'));
@@ -376,4 +419,40 @@ test('遮挡层级规划：覆盖全部终止 part，候选叠放后逐件检查
   } finally {
     await rm(taskRoot, { recursive: true, force: true });
   }
+});
+
+test('review blocked 或返修耗尽轮数均阻塞下游，不能当作通过', async () => {
+  for (const verdict of ['blocked', 'revise']) {
+    const { taskRoot, runDir } = await makeRun(`test-review-gate-${verdict}`, [{ id: 'face', kind: 'group', groups: [] }]);
+    try {
+      let plan = JSON.parse((await l2d('next', '--run', runDir, '--review-rounds', '1', '--json')).stdout);
+      await writeFile(plan.jobs[0].draft, square(16));
+      await l2d('preview', '--job', plan.jobs[0].dir, '--mode', 'blend');
+      await l2d('submit', '--job', plan.jobs[0].dir);
+      plan = JSON.parse((await l2d('next', '--run', runDir, '--review-rounds', '1', '--json')).stdout);
+      await l2d('preview', '--job', plan.jobs[0].dir, '--mode', 'blend');
+      await l2d('submit', '--job', plan.jobs[0].dir, '--verdict', verdict, '--feedback', '测试明确拒绝本次候选');
+      if (verdict === 'revise') {
+        plan = JSON.parse((await l2d('next', '--run', runDir, '--review-rounds', '1', '--json')).stdout);
+        assert.equal(plan.jobs[0].reason, 'repair');
+        await writeFile(plan.jobs[0].draft, square(18));
+        await l2d('preview', '--job', plan.jobs[0].dir, '--mode', 'blend');
+        await l2d('submit', '--job', plan.jobs[0].dir);
+      }
+      plan = JSON.parse((await l2d('next', '--run', runDir, '--review-rounds', '1', '--json')).stdout);
+      assert.equal(plan.jobs.length, 0);
+      assert.match(plan.blocked[0].message, /review.*未.*通过|review.*无通过/);
+      assert.equal(await readFile(join(runDir, 'parts/face.svg')).catch(() => null), null);
+    } finally { await rm(taskRoot, { recursive: true, force: true }); }
+  }
+});
+
+test('通过之后候选变化，旧 review 不能继续放行', async () => {
+  const { taskRoot, runDir } = await makeRun('test-stale-review', [{ id: 'face', kind: 'group', groups: [] }]);
+  try {
+    await driveOutlines(runDir, { face: square(16) });
+    await writeFile(join(runDir, 'stages/outline/face.svg'), square(20));
+    const plan = JSON.parse((await l2d('next', '--run', runDir, '--json')).stdout);
+    assert.equal(plan.jobs[0].kind, 'review');
+  } finally { await rm(taskRoot, { recursive: true, force: true }); }
 });

@@ -205,7 +205,8 @@ async function preview(args: string[]) {
   });
   if (job) {
     await appendObservation(resolve(values.job!), {
-      source: result.source, mode: result.mode, savedPath: result.savedPath, at: new Date().toISOString(),
+      source: result.source, mode: result.mode, savedPath: result.savedPath,
+      reference, crop: result.crop, scale: result.scale, at: new Date().toISOString(),
     });
   }
   console.log(values.json ? JSON.stringify(result, null, 2) : `预览：${result.savedPath}${result.bounds ? `；父范围 ${result.bounds.status}` : ''}`);

@@ -45,6 +45,6 @@ prompts/       5-组轮廓 / 6-轮廓review / 7-轮廓返修 / 8-同层轮廓去
 
 ## 保留项
 
-- 70 份提示词正文（`prompts/`）
+- 通用与分组特化提示词、参考清单和结构参考板（`prompts/`，核对记录见 docs/UPSTREAM-PROMPT-AUDIT.md）
 - 17 个工具 schema 的字段语义（转成 job 约束与 `submit` 参数校验）
 - 全部校验算法与事实/失效规则

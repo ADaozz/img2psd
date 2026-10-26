@@ -2,7 +2,7 @@
 
 `live2d-maker` 的可移植复刻版：**由外部 agent 推进全部步骤，程序负责派发、校验与发布；图片生成通过 CLI 调用已配置的模型服务。**
 
-上游快照见 [`vendor/live2d-maker`](vendor/live2d-maker)（AstraLayering `71140f3`，116 个 TS 文件 / 12519 行 / 70 份提示词 / 17 个工具）。本目录只保留源码，不含 `node_modules` 与运行数据。
+历史移植基线为 AstraLayering `71140f3`；本轮分组提示词与参考核对版本为 `1cfcb924`，详见 [上游提示词核对](docs/UPSTREAM-PROMPT-AUDIT.md)。只读快照可恢复至 `vendor/live2d-maker`。本目录只保留源码，不含 `node_modules` 与运行数据。
 
 Agent 首先阅读 [AGENTS.md](AGENTS.md)，完整操作协议见 [docs/AGENT-PROTOCOL.md](docs/AGENT-PROTOCOL.md)。没有全局 `l2d` 命令也可直接使用 `node src/cli/main.ts`。
 
@@ -48,7 +48,7 @@ live2d-portable/
 | 预览渲染（svg / blend / edge + crop + scale） | ✅ | `src/core/svg/render.ts` |
 | `l2d status / validate / check / preview / merge` | ✅ | 程序侧事实与校验 |
 | **参考准备 job（简化 / 素体换装）** | ✅ | 缺 `references/base-subject.png` 时先派发；程序校验尺寸、透明面积并写 `preparation.json` |
-| **job 物化 + `l2d next`** | ✅ | 准备 → 绘制/返修/review → 去重 → 补全 → 拆分 → 合并 → 遮挡，全程层屏障；job 无状态 |
+| **job 物化 + `l2d next`** | ✅ | 准备 → 绘制/返修/review → 去重 → 补全/completion-review → 拆分 → 合并 → 遮挡，全程层屏障；job 无状态 |
 | **`l2d submit` 发布事实** | ✅ | 校验 + 观测核对 + 审查轮数累积 + 返修计数 |
 | **review → 返修 → review 闭环** | ✅ | 端到端测试覆盖，含拒绝未自检提交 |
 | **遮挡补全 job（只收新增路径）** | ✅ | 程序从只读底稿合成、原形保留断言、独显+blend 双自检、发布 `parts/` 与自检记录 |
@@ -101,7 +101,7 @@ Nano 透明恢复最多需要两次生图（网络重试另计）。要求边缘
 ## 回归证据
 
 ```bash
-npm test                                               # 39 项
+npm test                                               # 当前全量测试
 ./node_modules/.bin/tsc -p tsconfig.json                  # 无错误
 node src/cli/main.ts status   --run ../.run/my-character/part-layering   # 只读核对现有产物
 node src/cli/main.ts validate --run ../.run/my-character/part-layering   # 136 个文件全过
@@ -109,7 +109,7 @@ node src/cli/main.ts validate --run ../.run/my-character/part-layering   # 136 �
 
 - `validate`：136 个真实文件（54 轮廓 + 54 去重 + 28 补全）全部通过，约 17 秒。
 - `merge --depth 1`：21 个终止叶子合并成功；渲染结果与上游 `mergePartSvgs` 输出**像素级一致**。
-- 全量 **39 项**测试（管线闭环、图片后端与透明恢复）：轮廓 `next → 绘制 → review(revise) → 返修 → review(pass)`；补全"只收新增路径 + 原形保留 + 草稿篡改拒绝"；整层去重"变更组与复制组 + 批次记录"；直属拆分"程序生成 ID + 拒绝单 part 包装 + 子组进入下一层"；遮挡层级"覆盖/唯一 level/候选叠放/漏检拒绝 + v3 落盘"；参考准备"缺图时先派发、尺寸/透明校验、写 preparation.json"；栅格"按步推进、KRA/PNG 交付校验、review/返修、完成标记、上游缺失阻塞"；初始分组"空树派发、非法名称拒绝、写 groups.json"。
+- 全量测试（管线闭环、图片后端与透明恢复）：轮廓 `next → 绘制 → review(revise) → 返修 → review(pass)`；补全"只收新增路径 + 原形保留 + 草稿篡改拒绝"；整层去重"变更组与复制组 + 批次记录"；直属拆分"程序生成 ID + 拒绝单 part 包装 + 子组进入下一层"；遮挡层级"覆盖/唯一 level/候选叠放/漏检拒绝 + v3 落盘"；参考准备"缺图时先派发、尺寸/透明校验、写 preparation.json"；栅格"按步推进、KRA/PNG 交付校验、review/返修、完成标记、上游缺失阻塞"；初始分组"空树派发、非法名称拒绝、写 groups.json"。
 - 图片后端测试：local 放大尺寸正确；api 分别命中 `generations` 与 `edits`（校验 multipart 的 `image[]`）；codex 不可用与 local 不支持生图都给出明确提示。
 - 管线测试数据写入 `.run/`，图片测试使用系统临时目录，结束即清理，不触碰工作区已有产物。
 
