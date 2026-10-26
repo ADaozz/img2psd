@@ -28,6 +28,7 @@ src/
                local.ts      ← Lanczos 放大（默认放大后端）
                api.ts        ← 兼容 Images API（generations / edits multipart）
                qwen.ts       ← 千问多模态生图（多图 + 不扩写提示词）
+               apiyi.ts      ← API易图片编辑（Nano Banana / GPT-Image-2.5，与 qwen-image-3 分流）
                codex.ts      ← Codex CLI（**唯一调用 Codex 的模块**）
                types.ts      ← PNG 校验与原子落盘
 prompts/raster/ 01-分层与补全 / 02-边缘柔化 / 02-review / 02-repair / 03-去除连体服 /

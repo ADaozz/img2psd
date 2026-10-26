@@ -12,11 +12,7 @@ import { renderPreview, type PreviewMode } from '../core/svg/render.ts';
 import { assertCompletionPreserves } from '../core/svg/completion.ts';
 import { mergePartSvgs } from '../core/svg/merge.ts';
 import { nodeKind, normalizeTree, walkGroups, type GroupNode } from '../core/facts/groups.ts';
-import { jobDirectory, planJobs } from '../core/jobs/plan.ts';
-import { materialize, readJob } from '../core/jobs/materialize.ts';
-import { appendObservation } from '../core/jobs/observations.ts';
-import { submit as submitJob } from '../core/jobs/submit.ts';
-import { imageGenerate, upscale as upscaleImage, selectBackend, qwenRequest, qwenEndpoint } from '../agents/image.ts';
+import { imageGenerate, upscale as upscaleImage, qwenRequest, qwenEndpoint, canonicalModel, previewApiyi, providerForModel, resolveBackendName, taskModel } from '../agents/image.ts';
 import { matteBackground } from '../core/image/matte.ts';
 import { loadRasterConfig, upstreamDirectory } from '../core/raster/config.ts';
 
@@ -186,7 +182,12 @@ async function preview(args: string[]) {
     job: { type: 'string' }, json: { type: 'boolean' },
   } });
   // --job：按 job 绑定的参考、画布与父图渲染，并把观测登记到该 job。
-  const job = values.job ? await readJob(resolve(values.job)) : undefined;
+  // job 模块按命令加载，避免生图/放大被尚未纳入仓库的编排文件挡住。
+  const jobModules = values.job ? {
+    readJob: (await import('../core/jobs/materialize.ts')).readJob,
+    appendObservation: (await import('../core/jobs/observations.ts')).appendObservation,
+  } : undefined;
+  const job = jobModules ? await jobModules.readJob(resolve(values.job!)) : undefined;
   if (!values.svg && !job) throw new Error('preview 需要 --svg <文件> 或 --job <job 目录>');
   const svg = resolve(values.svg ?? job!.inputs.candidate ?? job!.output.draft);
   const root = resolve(values.root ?? job?.run ?? dirname(svg));
@@ -205,7 +206,7 @@ async function preview(args: string[]) {
     ...(crop ? { crop } : {}), ...(values.scale ? { scale: Number(values.scale) } : {}),
   });
   if (job) {
-    await appendObservation(resolve(values.job!), {
+    await jobModules!.appendObservation(resolve(values.job!), {
       source: result.source, mode: result.mode, savedPath: result.savedPath, at: new Date().toISOString(),
     });
   }
@@ -249,6 +250,8 @@ async function next(args: string[]) {
   const run = resolve(values.run);
   const maxRounds = values['review-rounds'] === undefined ? 2 : Number(values['review-rounds']);
   if (!Number.isSafeInteger(maxRounds) || maxRounds < 1 || maxRounds > 4) throw new Error('--review-rounds 须为 1..4');
+  const { planJobs, jobDirectory } = await import('../core/jobs/plan.ts');
+  const { materialize } = await import('../core/jobs/materialize.ts');
   const plan = await planJobs(run, { maxRounds, expand: values.expand === true });
   const jobs = [];
   for (const item of plan.items) {
@@ -276,6 +279,7 @@ async function submitCmd(args: string[]) {
     checks: { type: 'string' }, groups: { type: 'string' }, subject: { type: 'string' }, json: { type: 'boolean' },
   } });
   if (!values.job) throw new Error('submit 需要 --job <job 目录>');
+  const { submit: submitJob } = await import('../core/jobs/submit.ts');
   const result = await submitJob(resolve(values.job), {
     ...(values.svg ? { svg: values.svg } : {}),
     ...(values.verdict ? { verdict: values.verdict as 'pass' | 'revise' | 'blocked' } : {}),
@@ -303,39 +307,73 @@ async function imagegen(args: string[]) {
   const { values } = parseArgs({ args, options: {
     prompt: { type: 'string' }, 'prompt-file': { type: 'string' }, out: { type: 'string' },
     ref: { type: 'string', multiple: true }, size: { type: 'string' }, model: { type: 'string' },
-    backend: { type: 'string' }, 'dry-run': { type: 'boolean' }, matte: { type: 'boolean' }, json: { type: 'boolean' },
+    task: { type: 'string' }, backend: { type: 'string' }, 'dry-run': { type: 'boolean' },
+    loose: { type: 'boolean' }, 'image-size': { type: 'string' }, quality: { type: 'string' },
+    background: { type: 'string' }, matte: { type: 'boolean' }, json: { type: 'boolean' },
   } });
   if (!values.out) throw new Error('imagegen 需要 --out <输出 PNG>');
   const prompt = values['prompt-file'] ? await readFile(resolve(values['prompt-file']), 'utf8') : values.prompt;
   if (!prompt?.trim()) throw new Error('imagegen 需要 --prompt 或 --prompt-file');
+  const fromTask = values.task ? taskModel(values.task) : undefined;
+  const requested = canonicalModel(values.model);
+  if (fromTask && requested && requested !== fromTask) {
+    throw new Error(`--model ${requested} 与 --task ${values.task}（${fromTask}）不一致`);
+  }
+  const model = requested ?? fromTask;
+  const provider = providerForModel(model);
+  if (values.backend && provider && values.backend !== provider) {
+    throw new Error(`--model ${model} 属于 ${provider} 后端，与 --backend ${values.backend} 不一致`);
+  }
   const env = values.backend ? { ...process.env, L2D_IMAGE_BACKEND: values.backend } : process.env;
+  const imageSize = values['image-size'];
+  if (imageSize && imageSize !== '1K' && imageSize !== '2K' && imageSize !== '4K') {
+    throw new Error('--image-size 须为 1K、2K 或 4K');
+  }
   const job = {
     prompt: prompt.trim(), output: resolve(values.out),
     ...(values.size ? { size: values.size } : {}),
-    ...(values.model ? { model: values.model } : {}),
+    ...(model ? { model } : {}),
+    ...(values.loose ? { strict: false as const } : {}),
+    ...(imageSize ? { imageSize: imageSize as '1K' | '2K' | '4K' } : {}),
+    ...(values.quality ? { quality: values.quality as 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
+    ...(values.background ? { background: values.background as 'auto' | 'opaque' | 'transparent' } : {}),
     ...(values.ref?.length ? { references: values.ref.map(path => ({ path: resolve(path) })) } : {}),
   };
-  // 预检：只打印请求摘要（图片以长度替代 base64），不联网。
+  // 预检：只打印请求摘要（图片以长度替代 base64），不联网，也不打印密钥。
   if (values['dry-run']) {
-    const name = values.backend ?? env.L2D_IMAGE_BACKEND
-      ?? (env.L2D_IMAGE_BASE_URL && env.L2D_IMAGE_API_KEY ? 'api' : env.DASHSCOPE_API_KEY ? 'qwen' : 'codex');
-    if (name !== 'qwen') throw new Error('--dry-run 目前只支持 qwen 后端');
-    const model = env.L2D_IMAGE_MODEL?.trim() || 'qwen-image-3.0-pro';
-    const { body, images } = await qwenRequest(job, model);
-    const content = (body.input.messages[0].content as Record<string, unknown>[])
-      .map(item => ('image' in item ? { image: `<data URI，${String(item.image).length} 字符>` } : item));
-    console.log(JSON.stringify({
-      endpoint: qwenEndpoint(env.L2D_IMAGE_BASE_URL?.trim() || 'https://cn-beijing.maas.qianwenaiapi.com/api/v1'),
-      model, promptChars: job.prompt.length, images,
-      body: { ...body, input: { messages: [{ role: 'user', content }] } },
-    }, null, 2));
-    return 0;
+    const name = resolveBackendName('imagegen', env, model);
+    if (name === 'qwen') {
+      const qwenModel = model && providerForModel(model) === 'qwen'
+        ? model
+        : canonicalModel(env.L2D_IMAGE_MODEL) || 'qwen-image-3.0-pro';
+      const { body, images } = await qwenRequest({ ...job, model: qwenModel }, qwenModel);
+      const content = (body.input.messages[0].content as Record<string, unknown>[])
+        .map(item => ('image' in item ? { image: `<data URI，${String(item.image).length} 字符>` } : item));
+      console.log(JSON.stringify({
+        endpoint: qwenEndpoint(env.L2D_IMAGE_BASE_URL?.trim() || 'https://cn-beijing.maas.qianwenaiapi.com/api/v1'),
+        model: qwenModel, promptChars: job.prompt.length, images,
+        body: { ...body, input: { messages: [{ role: 'user', content }] } },
+      }, null, 2));
+      return 0;
+    }
+    if (name === 'apiyi') {
+      const configured = canonicalModel(env.L2D_IMAGE_MODEL);
+      const apiyiModel = model && provider === 'apiyi' ? model
+        : configured && providerForModel(configured) === 'apiyi' ? configured : undefined;
+      console.log(JSON.stringify(await previewApiyi(job, {
+        baseUrl: env.APIYI_BASE_URL?.trim() || 'https://api.apiyi.com',
+        ...(apiyiModel ? { model: apiyiModel } : {}),
+      }), null, 2));
+      return 0;
+    }
+    throw new Error('--dry-run 目前只支持 qwen 与 apiyi 后端');
   }
   const result = await imageGenerate(job, env);
   // 有些模型只返回白底 RGB；--matte 用确定性灌水补出透明背景。
   const matted = values.matte ? await matteBackground(result.savedPath, result.savedPath) : undefined;
   console.log(values.json ? JSON.stringify({ ...result, ...(matted ? { matte: matted } : {}) }, null, 2)
-    : `已生成：${result.savedPath}（后端 ${result.backend}，${result.bytes} 字节）`
+    : `已生成：${result.savedPath}（后端 ${result.backend}${result.model ? `，模型 ${result.model}` : ''}，${result.bytes} 字节）`
+      + (result.aligned ? '；已等比例对齐到目标画布' : '')
       + (matted ? `；已去背（背景 ${matted.background}，去除 ${(matted.removed / matted.total * 100).toFixed(1)}% 像素）` : ''));
   return 0;
 }
@@ -389,13 +427,17 @@ const usage = `l2d — live2d-portable 唯一 agent 接口（核心命令不依�
   l2d check    --svg <file> --group <id> [--canvas 1024x1536] [--parent <svg>] [--allow-empty] [--json]
   l2d merge    --run <part-layering> --out <preview.svg> [--depth N] [--partial]
   l2d imagegen --prompt <文本> | --prompt-file <f> --out <png> [--ref <png> ...] [--size WxH]
-               [--model <id>] [--backend qwen|api|codex] [--dry-run] [--matte]
+               [--model qwen-image-3.0-pro|qwenimage3|gemini-nano-banana-2.1|gpt-image-2.5-sunburst|gpt-image-2.5-flare]
+               [--task standardize|body_reference|fast_comparison]
+               [--backend qwen|apiyi|api|codex] [--loose] [--image-size 1K|2K|4K]
+               [--quality high] [--background auto|opaque|transparent] [--dry-run] [--matte]
   l2d upscale  --in <png> --out <png> [--scale 2..8] [--backend local|codex]
   l2d matte    --in <png> --out <png> [--tolerance 0..120] [--feather 0..4]
 
 执行者约定：l2d next 拿到 job → 读 INSTRUCTIONS.md → 写草稿 → l2d preview 自检 → l2d submit。
 程序负责校验与发布事实；只有 imagegen / upscale 涉及图片生成，且后端可选：
-  L2D_IMAGE_BACKEND=api|codex（生图）、L2D_UPSCALE_BACKEND=local|codex（放大）。`;
+  L2D_IMAGE_BACKEND=qwen|apiyi|api|codex（生图）、L2D_UPSCALE_BACKEND=local|codex（放大）。
+  qwen-image-3 与 API易编辑模型写在同一次 imagegen 里，按 --model / --task 选后端。`;
 
 // 启动时加载项目 .env；已有环境变量优先，L2D_NO_DOTENV=1 可跳过。
 if (!process.env.L2D_NO_DOTENV) loadDotEnv(fileURLToPath(new URL('../../.env', import.meta.url)));
